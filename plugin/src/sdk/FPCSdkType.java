@@ -133,7 +133,7 @@ public class FPCSdkType extends BasePascalSdkType {
         super.configureOptions(sdk, data, target);
         File file = PascalSdkUtil.getPPUDumpExecutable(sdk.getHomePath() != null ? sdk.getHomePath() : "");
         data.setValue(PascalSdkData.Keys.DECOMPILER_COMMAND.getKey(), file.getAbsolutePath());
-        StrBuilder sb = new StrBuilder();
+        StrBuilder sb = new StrBuilder("-Mdelphi ");
         if (SystemUtils.IS_OS_WINDOWS) {
             sb.append("-dMSWINDOWS ");
         } else {
@@ -150,6 +150,7 @@ public class FPCSdkType extends BasePascalSdkType {
             sb.append("-dCPUX86 ");
         }
         data.setValue(PascalSdkData.Keys.COMPILER_OPTIONS.getKey(), sb.toString());
+        data.setValue(PascalSdkData.Keys.COMPILER_OPTIONS_DEBUG.getKey(), "-Ddebug -glh -CroiO -godwarfsets");
     }
 
     private static void configureSdkPaths(@NotNull final Sdk sdk, String target) {

@@ -2,22 +2,35 @@ package com.siberika.idea.pascal.ide.actions;
 
 import com.intellij.openapi.application.QueryExecutorBase;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiElement;
-import com.intellij.psi.PsiReference;
+import com.intellij.psi.PsiManager;
 import com.intellij.psi.search.searches.DefinitionsScopedSearch;
-import com.intellij.psi.search.searches.ReferencesSearch;
+import com.intellij.psi.stubs.StubIndex;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.util.Processor;
+import com.siberika.idea.pascal.lang.parser.NamespaceRec;
 import com.siberika.idea.pascal.lang.psi.PasEntityScope;
 import com.siberika.idea.pascal.lang.psi.PasExportedRoutine;
+import com.siberika.idea.pascal.lang.psi.PasGenericTypeIdent;
 import com.siberika.idea.pascal.lang.psi.PasRoutineImplDecl;
+import com.siberika.idea.pascal.lang.psi.PascalNamedElement;
+import com.siberika.idea.pascal.lang.psi.PascalRoutine;
 import com.siberika.idea.pascal.lang.psi.PascalStructType;
-import com.siberika.idea.pascal.lang.psi.impl.PascalRoutineImpl;
+import com.siberika.idea.pascal.lang.psi.PascalStubElement;
+import com.siberika.idea.pascal.lang.psi.impl.PasField;
+import com.siberika.idea.pascal.lang.references.PasReferenceUtil;
+import com.siberika.idea.pascal.lang.references.PascalClassByNameContributor;
+import com.siberika.idea.pascal.lang.references.ResolveContext;
+import com.siberika.idea.pascal.lang.references.ResolveUtil;
+import com.siberika.idea.pascal.lang.stub.PascalStructIndex;
+import com.siberika.idea.pascal.lang.stub.StubUtil;
 import com.siberika.idea.pascal.util.PsiUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Collection;
 import java.util.LinkedHashSet;
+import java.util.List;
 
 /**
  * Author: George Bakhtadze
@@ -34,7 +47,7 @@ public class PascalDefinitionsSearch extends QueryExecutorBase<PsiElement, Defin
     }
 
     @Override
-    public void processQuery(@NotNull DefinitionsScopedSearch.SearchParameters queryParameters, @NotNull Processor<PsiElement> consumer) {
+    public void processQuery(@NotNull DefinitionsScopedSearch.SearchParameters queryParameters, @NotNull Processor<? super PsiElement> consumer) {
         Collection<PasEntityScope> targets = findImplementations(queryParameters.getElement(), GotoSuper.LIMIT_NONE, 0);
         for (PsiElement target : targets) {
             consumer.process(target);
@@ -43,7 +56,7 @@ public class PascalDefinitionsSearch extends QueryExecutorBase<PsiElement, Defin
 
     public static Collection<PasEntityScope> findImplementations(PsiElement element, Integer limit, int rCnt) {
         Collection<PasEntityScope> targets = new LinkedHashSet<PasEntityScope>();
-        PascalRoutineImpl routine = element instanceof PascalRoutineImpl ? (PascalRoutineImpl) element : PsiTreeUtil.getParentOfType(element, PascalRoutineImpl.class);
+        PascalRoutine routine = element instanceof PascalRoutine ? (PascalRoutine) element : PsiTreeUtil.getParentOfType(element, PascalRoutine.class);
         if (routine != null) {
             findImplementingMethods(targets, routine, limit, 0);
         } else {
@@ -52,13 +65,13 @@ public class PascalDefinitionsSearch extends QueryExecutorBase<PsiElement, Defin
         return targets;
     }
 
-    public static void findImplementingMethods(Collection<PasEntityScope> targets, PascalRoutineImpl routine, Integer limit, int rCnt) {
+    public static void findImplementingMethods(Collection<PasEntityScope> targets, PascalRoutine routine, Integer limit, int rCnt) {
         Collection<PasEntityScope> found = new LinkedHashSet<PasEntityScope>();
         Collection<PasEntityScope> scopes = new LinkedHashSet<PasEntityScope>();
         if (routine instanceof PasRoutineImplDecl) {
             PsiElement el = SectionToggle.retrieveDeclaration(routine, false);
             if (el instanceof PasExportedRoutine) {
-                routine = (PascalRoutineImpl) el;
+                routine = (PascalRoutine) el;
             } else {
                 return;
             }
@@ -80,24 +93,69 @@ public class PascalDefinitionsSearch extends QueryExecutorBase<PsiElement, Defin
             return;
         }
         if (rCnt > MAX_RECURSION) {
-            LOG.error("Max recursion reached");
+            LOG.info("ERROR: Max recursion reached");
             return;
         }
-        if ((null == struct) || (null == struct.getNameIdentifier())) {
+        if (null == struct) {
             return;
         }
-        for (PsiReference psiReference : ReferencesSearch.search(struct.getNameIdentifier())) {
-            if ((limit != null) && (limit <= targets.size())) {
-                return;
-            }
-            if (PsiUtil.isClassParent(psiReference.getElement())) {
-                struct = PsiUtil.getStructByElement(psiReference.getElement());
-                if (PsiUtil.isElementUsable(struct)) {
-                    targets.add(struct);
-                    findDescendingStructs(targets, struct, GotoSuper.calcRemainingLimit(targets, limit), rCnt + 1);
+
+        final String name = ResolveUtil.cleanupName(struct.getName()).toUpperCase();
+        final Project project = struct.getProject();
+
+        StubIndex index = StubIndex.getInstance();
+
+        final boolean includeNonProjectItems = PsiUtil.isFromLibrary(struct);
+
+        index.processAllKeys(PascalStructIndex.KEY, new Processor<String>() {
+                    @Override
+                    public boolean process(String key) {
+                        index.processElements(PascalStructIndex.KEY, key, project, PascalClassByNameContributor.getScope(project, includeNonProjectItems),
+                                PascalStructType.class, new Processor<PascalStructType>() {
+                                    @Override
+                                    public boolean process(PascalStructType type) {
+                                        List<String> parents = type.getParentNames();
+                                        for (String parent : parents) {
+                                            if (parent.toUpperCase().endsWith(name)) {
+                                                PasEntityScope resolved = resolveParent(struct, type, parent);
+                                                if (elementsEqual(struct, resolved)) {
+                                                    targets.add(type);
+                                                    findDescendingStructs(targets, type, GotoSuper.calcRemainingLimit(targets, limit), rCnt + 1);
+                                                }
+                                            }
+                                        }
+                                        return ((null == limit) || (limit > targets.size()));
+                                    }
+
+                                    private boolean elementsEqual(PascalStructType struct, PasEntityScope resolved) {
+                                        return (resolved != null) &&
+                                                (PsiManager.getInstance(project).areElementsEquivalent(struct, resolved)
+                                                        || struct.getUniqueName().equalsIgnoreCase(ResolveUtil.cleanupName(resolved.getUniqueName())));
+                                    }
+                                });
+                        return ((null == limit) || (limit > targets.size()));
+                    }
+                },
+                PascalClassByNameContributor.getScope(project, includeNonProjectItems), null);
+    }
+
+    private static PasEntityScope resolveParent(PascalStructType parent, PascalStructType descendant, String name) {
+        ResolveContext ctx = new ResolveContext(descendant, PasField.TYPES_TYPE, PsiUtil.isFromLibrary(parent), null, null);
+        NamespaceRec rec = NamespaceRec.fromFQN(descendant, name);
+        Collection<PasField> fields = PasReferenceUtil.resolve(rec, ctx, 0);
+        for (PasField field : fields) {
+            PascalNamedElement el = field.getElement();
+            if (el instanceof PasGenericTypeIdent) {
+                return PasReferenceUtil.resolveTypeScope(NamespaceRec.fromFQN(el, name), null, PsiUtil.isFromLibrary(parent));
+            } else if (ResolveUtil.isStubPowered(el)) {          // not tested
+                ctx = new ResolveContext(StubUtil.retrieveScope((PascalStubElement) el), PasField.TYPES_TYPE, PsiUtil.isFromLibrary(parent), null, ctx.unitNamespaces);
+                PasField.ValueType types = ResolveUtil.resolveTypeWithStub((PascalStubElement) el, ctx, 0);
+                if (types != null) {
+                    return types.getTypeScopeStub();
                 }
             }
         }
+        return null;
     }
 
 }

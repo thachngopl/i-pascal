@@ -19,6 +19,9 @@ public class PascalCompletionConfidence extends CompletionConfidence {
     @NotNull
     @Override
     public ThreeState shouldSkipAutopopup(@NotNull PsiElement contextElement, @NotNull PsiFile psiFile, int offset) {
+        if (PascalLexer.NUMBERS.contains(contextElement.getNode().getElementType())) {
+            return ThreeState.YES;
+        }
         if ((contextElement.getPrevSibling() != null) && (contextElement.getPrevSibling().getNode() != null)) {
 
             /*System.out.println("===*** shouldSkipAutopopup: " + contextElement + ", sib: " + contextElement.getPrevSibling()
@@ -35,6 +38,7 @@ public class PascalCompletionConfidence extends CompletionConfidence {
     }
 
     private static final Pattern COMMENT_BEGIN = Pattern.compile("\\{\\$?\\w+");
+
     private boolean shouldSkipInComment(PsiElement contextElement, int offset) {
         int len = offset - contextElement.getTextRange().getStartOffset();
         String text = contextElement.getText().substring(0, len);
@@ -42,6 +46,8 @@ public class PascalCompletionConfidence extends CompletionConfidence {
     }
 
     private boolean isName(IElementType type) {
-        return (type == PasTypes.SUB_IDENT) || (type == PasTypes.NAME);
+        return (type == PasTypes.SUB_IDENT) || (type == PasTypes.NAME)
+                || (type == PasTypes.CALL_EXPR) || (type == PasTypes.INDEX_EXPR) || (type == PasTypes.DEREFERENCE_EXPR)
+                || (type == PasTypes.PAREN_EXPR) || (type == PasTypes.EXPRESSION);
     }
 }

@@ -2,6 +2,8 @@ package com.siberika.idea.pascal.jps.builder;
 
 import com.intellij.execution.process.BaseOSProcessHandler;
 import com.intellij.execution.process.ProcessAdapter;
+import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.util.SmartList;
 import com.siberika.idea.pascal.jps.compiler.CompilerMessager;
@@ -16,10 +18,13 @@ import com.siberika.idea.pascal.jps.util.ParamMap;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.jps.builders.BuildOutputConsumer;
+import org.jetbrains.jps.builders.BuildTarget;
+import org.jetbrains.jps.builders.BuildTargetIndex;
 import org.jetbrains.jps.builders.BuildTargetType;
 import org.jetbrains.jps.builders.DirtyFilesHolder;
 import org.jetbrains.jps.builders.FileProcessor;
 import org.jetbrains.jps.builders.java.JavaBuilderUtil;
+import org.jetbrains.jps.cmdline.ProjectDescriptor;
 import org.jetbrains.jps.incremental.CompileContext;
 import org.jetbrains.jps.incremental.ProjectBuildException;
 import org.jetbrains.jps.incremental.TargetBuilder;
@@ -30,7 +35,9 @@ import org.jetbrains.jps.incremental.resources.StandardResourceBuilderEnabler;
 import org.jetbrains.jps.model.java.JpsJavaExtensionService;
 import org.jetbrains.jps.model.library.JpsOrderRootType;
 import org.jetbrains.jps.model.library.sdk.JpsSdk;
+import org.jetbrains.jps.model.module.JpsDependencyElement;
 import org.jetbrains.jps.model.module.JpsModule;
+import org.jetbrains.jps.model.module.JpsModuleDependency;
 import org.jetbrains.jps.model.module.JpsModuleSourceRoot;
 
 import java.io.File;
@@ -40,15 +47,20 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Author: George Bakhtadze
  * Date: 19/05/2015
  */
 public class PascalTargetBuilder extends TargetBuilder<PascalSourceRootDescriptor, PascalTarget> {
+    private static final Logger LOG = Logger.getInstance(PascalTargetBuilder.class);
     private static final String NAME = "Pascal builder";
+
+    public static final Key<String> RUN_CONFIGURATION_KEY = Key.create("RUN_CONFIGURATION");
 
     protected PascalTargetBuilder(Collection<? extends BuildTargetType<? extends PascalTarget>> buildTargetTypes) {
         super(buildTargetTypes);
@@ -71,7 +83,10 @@ public class PascalTargetBuilder extends TargetBuilder<PascalSourceRootDescripto
     @Override
     public void build(@NotNull PascalTarget target, @NotNull DirtyFilesHolder<PascalSourceRootDescriptor, PascalTarget> holder,
                       @NotNull BuildOutputConsumer outputConsumer, @NotNull CompileContext context) throws ProjectBuildException, IOException {
-
+        LOG.info(String.format("Build() for target %s", target.getId()));
+        if (isDependencyTarget(target, context)) {
+            return;
+        }
         JpsModule module = target.getModule();
         File mainFile = PascalBackendCompiler.getMainFile(ParamMap.getJpsParams(module.getProperties()));
 
@@ -90,6 +105,8 @@ public class PascalTargetBuilder extends TargetBuilder<PascalSourceRootDescripto
 
         CompilerMessager messager = new PascalCompilerMessager(getPresentableName(), context);
 
+        boolean isDebug = isDebugBuild(context);
+
         JpsSdk<?> sdk = module.getSdk(JpsPascalSdkType.INSTANCE);
         if (sdk != null) {
             PascalBackendCompiler compiler = getCompiler(sdk, messager);
@@ -105,13 +122,17 @@ public class PascalTargetBuilder extends TargetBuilder<PascalSourceRootDescripto
                     outputConsumer.registerOutputFile(compiled, Collections.singleton(file.getCanonicalPath()));
                 }
 
+                List<File> sourcePaths = new ArrayList<File>();
+                getFiles(new HashSet<JpsModule>(), sourcePaths, module);
                 String[] cmdLine = compiler.createStartupCommand(sdk.getHomePath(), module.getName(), outputDir.getAbsolutePath(),
-                        sdkFiles, getFiles(module.getSourceRoots()),
+                        sdkFiles, sourcePaths,
                         files.get(target), ParamMap.getJpsParams(module.getProperties()),
-                        isRebuild,
+                        isRebuild, isDebug,
                         ParamMap.getJpsParams(sdk.getSdkProperties()));
                 if (cmdLine != null) {
-                    int exitCode = launchCompiler(compiler, messager, cmdLine, null);
+                    // For Delphi workingDirectory should be null otherwise file paths in compiler messages will be relative
+                    File workingDirectory = PascalCompilerFamily.DELPHI.equals(getCompilerFamily(sdk)) ? null : new File(FileUtil.expandUserHome("~/"));
+                    int exitCode = launchCompiler(compiler, messager, cmdLine, workingDirectory);
                     if (exitCode != 0) {
                         messager.warning("Error. Compiler exit code: " + exitCode, null, -1L, -1L);
                     }
@@ -126,14 +147,48 @@ public class PascalTargetBuilder extends TargetBuilder<PascalSourceRootDescripto
         }
     }
 
+    private boolean isDebugBuild(CompileContext context) {
+        String runConfigName = context.getBuilderParameter(RUN_CONFIGURATION_KEY.toString());
+        return (runConfigName != null) && runConfigName.startsWith("[debug]");
+    }
+
+    private boolean isDependencyTarget(PascalTarget target, CompileContext context) {
+        final ProjectDescriptor pd = context.getProjectDescriptor();
+        final BuildTargetIndex targetIndex = pd.getBuildTargetIndex();
+        targetIndex.getSortedTargetChunks(context);
+        List<PascalTarget> all = targetIndex.getAllTargets(PascalTargetType.PRODUCTION);
+        for (PascalTarget pascalTarget : all) {
+            Collection<BuildTarget<?>> deps = pascalTarget.computeDependencies();
+            if (context.getScope().isAffected(pascalTarget)) {
+                for (BuildTarget<?> dep : deps) {
+                    if (target.equals(dep)) {
+                        log(context, String.format("Skipping build of module \"%s\" because it's a dependency of module \"%s\"", target.getId(), pascalTarget.getId()));
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     @Nullable
     private PascalBackendCompiler getCompiler(@NotNull JpsSdk<?> sdk, CompilerMessager messager) {
+        PascalCompilerFamily family = getCompilerFamily(sdk);
+        if (PascalCompilerFamily.FPC.equals(family)) {
+            return new FPCBackendCompiler(messager);
+        } else if (PascalCompilerFamily.DELPHI.equals(family)) {
+            return new DelphiBackendCompiler(messager);
+        }
+        return null;
+    }
+
+    private PascalCompilerFamily getCompilerFamily(JpsSdk<?> sdk) {
         ParamMap params = ParamMap.getJpsParams(sdk.getSdkProperties());
         String family = params != null ? params.get(PascalSdkData.Keys.COMPILER_FAMILY.getKey()) : null;
-        if (PascalCompilerFamily.FPC.name().equals(family)) {
-            return new FPCBackendCompiler(messager);
-        } else if (PascalCompilerFamily.DELPHI.name().equals(family)) {
-            return new DelphiBackendCompiler(messager);
+        for (PascalCompilerFamily compilerFamily : PascalCompilerFamily.values()) {
+            if (compilerFamily.name().equals(family)) {
+                return compilerFamily;
+            }
         }
         return null;
     }
@@ -152,12 +207,20 @@ public class PascalTargetBuilder extends TargetBuilder<PascalSourceRootDescripto
         context.processMessage(new CompilerMessage(NAME, BuildMessage.Kind.INFO, text));
     }
 
-    private List<File> getFiles(List<JpsModuleSourceRoot> sourceRoots) {
-        List<File> result = new ArrayList<File>();
-        for (JpsModuleSourceRoot root : sourceRoots) {
+    private void getFiles(Set<JpsModule> visited, List<File> result, JpsModule module) {
+        if ((null == module) || visited.contains(module)) {
+            return;
+        }
+        visited.add(module);
+        LOG.info("Collecting files for module: " + module.getName());
+        for (JpsModuleSourceRoot root : module.getSourceRoots()) {
             result.add(root.getFile());
         }
-        return result;
+        for (JpsDependencyElement element : module.getDependenciesList().getDependencies()) {
+            if (element instanceof JpsModuleDependency) {
+                getFiles(visited, result, ((JpsModuleDependency) element).getModule());
+            }
+        }
     }
 
     private static File getBuildOutputDirectory(@NotNull JpsModule module, boolean forTests,

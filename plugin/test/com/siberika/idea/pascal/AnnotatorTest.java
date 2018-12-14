@@ -103,6 +103,16 @@ public class AnnotatorTest extends LightPlatformCodeInsightFixtureTestCase {
         myFixture.checkHighlighting(false, false, false);
     }
 
+    public void testRoutinesForward() {
+        myFixture.configureByFiles("routinesForward.pas");
+        myFixture.checkHighlighting(false, false, false);
+    }
+
+    public void testRoutinesNestedForward() {
+        myFixture.configureByFiles("routinesNestedForward.pas");
+        myFixture.checkHighlighting(false, false, false);
+    }
+
     public void testNestedMembers() {
         myFixture.configureByFiles("nestedMembers.pas");
         myFixture.checkHighlighting(false, false, true);
@@ -123,11 +133,6 @@ public class AnnotatorTest extends LightPlatformCodeInsightFixtureTestCase {
         myFixture.checkHighlighting(false, false, false);
     }
 
-    public void testUnusedUnits() {
-        myFixture.configureByFiles("unusedUnits.pas", "types.pas", "objects.pas", "scoped.types.pas", "exception.pas", "interfaces.pas", "routines.pas", "enumTypes.pas");
-        myFixture.checkHighlighting(true, false, false);
-    }
-
     public void testParamsInDeclaration() {
         myFixture.configureByFiles("paramsInDeclaration.pas");
         myFixture.checkHighlighting(true, false, false);
@@ -142,4 +147,35 @@ public class AnnotatorTest extends LightPlatformCodeInsightFixtureTestCase {
         myFixture.configureByFiles("nestedRoutines.pas");
         myFixture.checkHighlighting(true, false, false);
     }
+
+    public void testKeywordIdentifiers() {
+        myFixture.configureByFiles("keywordIdentifiers.pas");
+        myFixture.checkHighlighting(true, false, false);
+    }
+
+    public void testFPCGenerics() {
+        myFixture.configureByFiles("fpcGenerics.pas");
+        myFixture.checkHighlighting(true, false, false);
+    }
+
+    public void testVariant() {
+        myFixture.configureByFiles("variant.pas");
+        myFixture.checkHighlighting(true, false, false);
+    }
+
+    public void testHelpers() {
+        myFixture.configureByFiles("helpers.pas");
+        myFixture.checkHighlighting(true, false, false);
+    }
+
+    public void testUnitName() {
+        myFixture.configureByFiles("unitName.pas");
+        myFixture.checkHighlighting(true, false, false);
+    }
+
+    public void testInlineDeclaration() {
+        myFixture.configureByFiles("inlineDecl.pas");
+        myFixture.checkHighlighting(false, false, true);
+    }
+
 }

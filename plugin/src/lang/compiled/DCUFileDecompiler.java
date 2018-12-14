@@ -36,14 +36,16 @@ public class DCUFileDecompiler implements BinaryFileDecompiler {
 
     private static final Pattern WARNING1 = Pattern.compile("Warning:.+- all imported names will be shown with unit names");
     private static final Pattern WARNING2 = Pattern.compile("Warning at 0x[A-F0-9]+.*");
-    private static final Pattern CONSTANT1 = Pattern.compile("\\s*[A-F0-9]+:\\s*.+(\\||\\[)[A-F0-9 (]+\\|.*");
-    private static final Pattern CONSTANT2 = Pattern.compile("\\s*raw\\s*\\[\\$[0-9A-F]+\\.\\.\\$[0-9A-F]+\\]\\s*at \\$[0-9A-F]+");
+    private static final Pattern CONSTANT1 = Pattern.compile("\\s*[A-F0-9]+:\\s*.+([|\\[])[A-F0-9 (]+\\|.*");
+    private static final Pattern CONSTANT2 = Pattern.compile("\\s*raw\\s*\\[\\$[0-9A-F]+\\.\\.\\$[0-9A-F]+]\\s*at \\$[0-9A-F]+");
     private static final Pattern VAR = Pattern.compile("\\s*spec var\\s+\\w+\\.\\$\\w+.*");
+    private static final Pattern VAR_PREFIXED = Pattern.compile("\\s*@\\w+.*");
     private static final Pattern TYPE = Pattern.compile("\\s*\\w+\\.\\w+\\s*=.*");
     private static final Pattern COMMENTED_TYPE = Pattern.compile("\\s*\\{type}\\s*");
     private static final Pattern ROUTINE = Pattern.compile("(\\s*)(procedure|function|operator)(\\s+)(@)(\\w+)");
     private static final Pattern INLINE_TYPE = Pattern.compile("\\s*:\\d+\\s+=\\s+.*");
     private static final File NULL_FILE = new File("");
+    private static final Pattern WARNING_WITH_UNITHEAD = Pattern.compile("(?i)Warning at 0x[A-F0-9]+.*unit\\s+.+;$");
 
     @NotNull
     @Override
@@ -80,7 +82,7 @@ public class DCUFileDecompiler implements BinaryFileDecompiler {
             String[] args = getArgs(BasePascalSdkType.getDecompilerArgs(sdk), file.getPath(), "-U" + Joiner.on(';').join(paths), "-I", "-SI", "-");
             result = SysUtils.runAndGetStdOut(sdk.getHomePath(), decompilerCommand.getCanonicalPath(), args);
             if (result != null) {
-                return handleText(result);
+                return handleText(result).replace("\r", "");
             } else {
                 return PascalBundle.message("decompile.empty.result");
             }
@@ -133,6 +135,10 @@ public class DCUFileDecompiler implements BinaryFileDecompiler {
                 inConst = false;
             }
             if (shouldCommentOut(line)) {                          // Comment out all decompiler warnings
+                if (WARNING_WITH_UNITHEAD.matcher(line).matches()) {
+                    line = line.replaceAll("(?i)unit\\s+", "\nunit ");
+                    unitDone = true;
+                }
                 res.append("// ");
             } else if (!unitDone) {                                // Comment out all lines before unit declaration
                 if (line.startsWith("unit")) {
@@ -147,6 +153,8 @@ public class DCUFileDecompiler implements BinaryFileDecompiler {
                 res.append("  type\n    ");
             } else if (INLINE_TYPE.matcher(line).matches()) {
                 res.append(line.replaceFirst(":", "_"));
+            } else if (VAR_PREFIXED.matcher(line).matches()) {
+                res.append(line.replaceFirst("@", "_"));
             } else {
                 Matcher m = ROUTINE.matcher(line);
                 if (m.find()) {

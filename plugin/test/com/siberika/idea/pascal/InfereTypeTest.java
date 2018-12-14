@@ -36,6 +36,7 @@ public class InfereTypeTest extends LightPlatformCodeInsightFixtureTestCase {
         assertEquals("String", PascalExpression.infereType(expressions.get(i++).getExpr()));
         assertEquals("Boolean", PascalExpression.infereType(expressions.get(i++).getExpr()));
         assertEquals("Pointer", PascalExpression.infereType(expressions.get(i++).getExpr()));
+        assertEquals("TDatetime", PascalExpression.infereType(expressions.get(i++).getExpr()));
     }
 
     public void testPath() throws Exception {
@@ -58,6 +59,7 @@ public class InfereTypeTest extends LightPlatformCodeInsightFixtureTestCase {
         assertEquals("Integer", PascalExpression.infereType(expressions.get(i++).getExpr()));
         assertEquals("TInnerRec", PascalExpression.infereType(expressions.get(i++).getExpr()));
         assertEquals("Integer", PascalExpression.infereType(expressions.get(i++).getExpr()));
+        assertEquals("TClass1", PascalExpression.infereType(expressions.get(i++).getExpr()));
     }
 
     public void testComplex() throws Exception {
@@ -91,6 +93,7 @@ public class InfereTypeTest extends LightPlatformCodeInsightFixtureTestCase {
         assertEquals("Single", PascalExpression.infereType(expressions.get(i++).getExpr()));
         assertEquals("Double", PascalExpression.infereType(expressions.get(i++).getExpr()));
         assertEquals("Extended", PascalExpression.infereType(expressions.get(i++).getExpr()));
+        assertEquals("TRec", PascalExpression.infereType(expressions.get(i++).getExpr()));
     }
 
     private List<PasExpression> getStatementExpressions(String unitName) {

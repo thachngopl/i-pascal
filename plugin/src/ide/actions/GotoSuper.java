@@ -9,10 +9,13 @@ import com.intellij.psi.PsiFile;
 import com.intellij.psi.SmartPsiElementPointer;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.siberika.idea.pascal.PascalBundle;
+import com.siberika.idea.pascal.PascalRTException;
 import com.siberika.idea.pascal.lang.psi.PasEntityScope;
+import com.siberika.idea.pascal.lang.psi.PascalInterfaceDecl;
+import com.siberika.idea.pascal.lang.psi.PascalRoutine;
 import com.siberika.idea.pascal.lang.psi.PascalStructType;
 import com.siberika.idea.pascal.lang.psi.impl.PasField;
-import com.siberika.idea.pascal.lang.psi.impl.PascalRoutineImpl;
+import com.siberika.idea.pascal.lang.references.PasReferenceUtil;
 import com.siberika.idea.pascal.util.EditorUtil;
 import com.siberika.idea.pascal.util.PsiUtil;
 import com.siberika.idea.pascal.util.StrUtil;
@@ -54,21 +57,43 @@ public class GotoSuper implements LanguageCodeInsightActionHandler {
     public static Collection<PasEntityScope> retrieveGotoSuperTargets(PsiElement el) {
         LinkedHashSet<PasEntityScope> targets = new LinkedHashSet<PasEntityScope>();
         // cases el is: struct type, method decl, method impl
-        PascalRoutineImpl routine = PsiTreeUtil.getParentOfType(el, PascalRoutineImpl.class);
+        PascalRoutine routine = PsiTreeUtil.getParentOfType(el, PascalRoutine.class);
         if (routine != null) {
             getRoutineTarget(targets, routine);
         } else {
-            getParentStructs(targets, PsiUtil.getStructByElement(el));
+            retrieveParentStructs(targets, PsiUtil.getStructByElement(el), 0);
         }
         return targets;
     }
 
-    public static void getParentStructs(Collection<PasEntityScope> targets, PasEntityScope struct) {
+    public static void retrieveParentStructs(Collection<PasEntityScope> targets, PasEntityScope struct, final int recursionCount) {
+        if (recursionCount > PasReferenceUtil.MAX_RECURSION_COUNT) {
+            throw new PascalRTException("Too much recursion during retrieving parents: " + struct.getUniqueName());
+        }
         if (struct instanceof PascalStructType) {
             for (SmartPsiElementPointer<PasEntityScope> parent : struct.getParentScope()) {
                 PasEntityScope el = parent.getElement();
                 addTarget(targets, el);
-                getParentStructs(targets, el);
+                if (!struct.equals(el)) {
+                    retrieveParentStructs(targets, el, recursionCount + 1);
+                }
+            }
+        }
+    }
+
+    public static void retrieveParentInterfaces(Collection<PasEntityScope> targets, PasEntityScope struct, final int recursionCount) {
+        if (recursionCount > PasReferenceUtil.MAX_RECURSION_COUNT) {
+            throw new PascalRTException("Too much recursion during retrieving parents: " + struct.getUniqueName());
+        }
+        if (struct instanceof PascalStructType) {
+            for (SmartPsiElementPointer<PasEntityScope> parent : struct.getParentScope()) {
+                PasEntityScope el = parent.getElement();
+                if (el instanceof PascalInterfaceDecl) {
+                    targets.add(el);
+                }
+                if (!struct.equals(el)) {
+                    retrieveParentInterfaces(targets, el, recursionCount + 1);
+                }
             }
         }
     }
@@ -85,7 +110,7 @@ public class GotoSuper implements LanguageCodeInsightActionHandler {
         }
     }
 
-    private static void getRoutineTarget(Collection<PasEntityScope> targets, PascalRoutineImpl routine) {
+    private static void getRoutineTarget(Collection<PasEntityScope> targets, PascalRoutine routine) {
         if (null == routine) {
             return;
         }
@@ -103,7 +128,7 @@ public class GotoSuper implements LanguageCodeInsightActionHandler {
      * @param scopes     scopes where to search methods
      * @param routine    routine which name to search
      */
-    static void extractMethodsByName(Collection<PasEntityScope> targets, Collection<PasEntityScope> scopes, PascalRoutineImpl routine, boolean handleParents, Integer limit, int recursionCount) {
+    static void extractMethodsByName(Collection<PasEntityScope> targets, Collection<PasEntityScope> scopes, PascalRoutine routine, boolean handleParents, Integer limit, int recursionCount) {
         if (recursionCount > MAX_RECURSION_COUNT) {
             throw new IllegalStateException("Recursion limit reached");
         }

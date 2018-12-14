@@ -1,82 +1,47 @@
 package com.siberika.idea.pascal.ide.actions;
 
-import com.intellij.codeInsight.intention.LowPriorityAction;
 import com.intellij.codeInsight.intention.impl.BaseIntentionAction;
 import com.intellij.ide.DataManager;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleUtil;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.util.TextRange;
-import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
+import com.intellij.psi.search.GlobalSearchScope;
+import com.intellij.psi.search.ProjectScope;
+import com.intellij.psi.stubs.StubIndex;
 import com.intellij.util.IncorrectOperationException;
+import com.intellij.util.Processor;
+import com.siberika.idea.pascal.PascalBundle;
+import com.siberika.idea.pascal.PascalLanguage;
 import com.siberika.idea.pascal.lang.PascalImportOptimizer;
-import com.siberika.idea.pascal.lang.psi.PasNamespaceIdent;
-import com.siberika.idea.pascal.lang.psi.PasUsesClause;
-import com.siberika.idea.pascal.util.DocUtil;
+import com.siberika.idea.pascal.lang.context.CodePlace;
+import com.siberika.idea.pascal.lang.context.Context;
+import com.siberika.idea.pascal.lang.psi.PasEntityScope;
+import com.siberika.idea.pascal.lang.psi.PasModule;
+import com.siberika.idea.pascal.lang.psi.PascalModule;
+import com.siberika.idea.pascal.lang.psi.PascalNamedElement;
+import com.siberika.idea.pascal.lang.psi.PascalRoutine;
+import com.siberika.idea.pascal.lang.psi.PascalStubElement;
+import com.siberika.idea.pascal.lang.stub.PascalUnitSymbolIndex;
+import com.siberika.idea.pascal.util.EditorUtil;
 import com.siberika.idea.pascal.util.PsiUtil;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Collections;
-import java.util.List;
 
 import static com.intellij.openapi.actionSystem.ActionPlaces.EDITOR_POPUP;
+import static com.siberika.idea.pascal.PascalBundle.message;
 
 /**
  * Author: George Bakhtadze
  * Date: 21/12/2015
  */
 public class UsesActions {
-
-    public static class ExcludeUnitAction extends BaseUsesUnitAction {
-        public ExcludeUnitAction(String name, PasNamespaceIdent usedUnitName) {
-            super(name, usedUnitName);
-        }
-
-        @Override
-        public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
-            final Document doc = PsiDocumentManager.getInstance(usedUnitName.getProject()).getDocument(usedUnitName.getContainingFile());
-            if (doc != null) {
-                doc.insertString(usedUnitName.getTextRange().getStartOffset(), "{!}");
-                PsiDocumentManager.getInstance(project).commitDocument(doc);
-            }
-        }
-    }
-
-    public static class OptimizeUsesAction extends BaseUsesAction implements LowPriorityAction {
-        public OptimizeUsesAction(String name) {
-            super(name);
-        }
-
-        @Override
-        public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
-            PascalImportOptimizer.doProcess(file).run();
-        }
-    }
-
-    public static class MoveUnitAction extends BaseUsesUnitAction {
-        public MoveUnitAction(String name, PasNamespaceIdent usedUnitName) {
-            super(name, usedUnitName);
-        }
-
-        @Override
-        public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
-            TextRange range = getRangeToRemove();
-            if (range != null) {
-                final Document doc = PsiDocumentManager.getInstance(usedUnitName.getProject()).getDocument(usedUnitName.getContainingFile());
-                if (doc != null) {
-                    PascalImportOptimizer.addUnitToSection(PsiUtil.getElementPasModule(file), Collections.singletonList(usedUnitName.getName()), false);
-                    doc.deleteString(range.getStartOffset(), range.getEndOffset());
-                    PsiDocumentManager.getInstance(project).commitDocument(doc);
-                }
-            }
-        }
-
-    }
 
     public static class AddUnitAction extends BaseUsesAction {
         private final String unitName;
@@ -118,40 +83,67 @@ public class UsesActions {
 
     }
 
-    public static class RemoveUnitAction extends BaseUsesUnitAction {
-        public RemoveUnitAction(String name, PasNamespaceIdent usedUnitName) {
-            super(name, usedUnitName);
+    public static class SearchUnitAction extends BaseUsesAction {
+        private final boolean toInterface;
+        private final PascalNamedElement namedElement;
+        private String unitName;
+
+        public SearchUnitAction(PascalNamedElement namedElement, boolean toInterface) {
+            super(message("action.unit.search", namedElement.getName()));
+            this.namedElement = namedElement;
+            this.toInterface = toInterface;
         }
 
         @Override
         public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
-            TextRange range = getRangeToRemove();
-            if (range != null) {
-                final Document doc = PsiDocumentManager.getInstance(usedUnitName.getProject()).getDocument(usedUnitName.getContainingFile());
-                if (doc != null) {
-                    doc.deleteString(range.getStartOffset(), range.getEndOffset());
-                    PsiDocumentManager.getInstance(project).commitDocument(doc);
-                }
+            if (unitName != null) {
+                PascalImportOptimizer.addUnitToSection(PsiUtil.getElementPasModule(file), Collections.singletonList(unitName), toInterface);
+                EditorUtil.showInformationHint(editor, PascalBundle.message("action.unit.search.added", unitName,
+                        PascalBundle.message(toInterface ? "unit.section.interface": "unit.section.implementation")));
             }
         }
-    }
 
-    private static abstract class BaseUsesUnitAction extends BaseUsesAction {
-        protected final PasNamespaceIdent usedUnitName;
-        public BaseUsesUnitAction(String name, PasNamespaceIdent usedUnitName) {
-            super(name);
-            this.usedUnitName = usedUnitName;
+        @Override
+        public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
+            Context context = new Context(namedElement, namedElement, file);
+            if ((file != null) && PascalLanguage.INSTANCE.equals(file.getLanguage()) && context.contains(CodePlace.FIRST_IN_NAME)) {
+                lazyInit();
+                return unitName != null;
+            } else {
+                return false;
+            }
         }
 
-        protected TextRange getRangeToRemove() {
-            PasUsesClause usesClause = (PasUsesClause) usedUnitName.getParent();
-            List<TextRange> ranges = PascalImportOptimizer.getUnitRanges(usesClause);
-            TextRange res = PascalImportOptimizer.removeUnitFromSection(usedUnitName, usesClause, ranges, usesClause.getNamespaceIdentList().size());
-            if ((res != null) && (usesClause.getNamespaceIdentList().size() == 1)) {                                                              // Remove whole uses clause if last unit removed
-                final Document doc = PsiDocumentManager.getInstance(usedUnitName.getProject()).getDocument(usedUnitName.getContainingFile());
-                res = TextRange.create(usesClause.getTextRange().getStartOffset(), DocUtil.expandRangeEnd(doc, usesClause.getTextRange().getEndOffset(), DocUtil.RE_LF));
-            }
-            return res;
+        @NotNull
+        @Override
+        public String getText() {
+            lazyInit();
+            return unitName != null ? PascalBundle.message("action.unit.search.found", unitName) : PascalBundle.message("action.unit.search.notfound", namedElement.getName());
+        }
+
+        synchronized private void lazyInit() {
+            Module module = ModuleUtil.findModuleForPsiElement(namedElement);
+            final GlobalSearchScope scope = module != null ? GlobalSearchScope.moduleWithDependenciesAndLibrariesScope(module, false) : ProjectScope.getAllScope(namedElement.getProject());
+            String searchFor = namedElement.getName();
+            String searchForUpper = searchFor.toUpperCase();
+            StubIndex.getInstance().processElements(PascalUnitSymbolIndex.KEY, searchForUpper, namedElement.getProject(), scope,
+                    PascalNamedElement.class, new Processor<PascalNamedElement>() {
+                        @Override
+                        public boolean process(PascalNamedElement element) {
+                            String name = element.getName();
+                            if ((element instanceof PascalStubElement) &&
+                                    (searchFor.equalsIgnoreCase(element.getName())
+                                            || (name.toUpperCase().startsWith(searchForUpper) && (element instanceof PascalRoutine)))) {
+                                String uName = ((PascalStubElement) element).getContainingUnitName();
+                                PasEntityScope affScope = PsiUtil.getNearestAffectingScope(element);
+                                if ((uName != null) && (affScope instanceof PasModule) && (((PasModule) affScope).getModuleType() == PascalModule.ModuleType.UNIT)) {
+                                    unitName = uName;
+                                    return false;
+                                }
+                            }
+                            return true;
+                        }
+                    });
         }
 
     }
@@ -172,7 +164,7 @@ public class UsesActions {
 
         @Override
         public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
-            return true;
+            return (file != null) && PascalLanguage.INSTANCE.equals(file.getLanguage());
         }
 
         @NotNull

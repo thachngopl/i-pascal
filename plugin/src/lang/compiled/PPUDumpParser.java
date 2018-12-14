@@ -1,8 +1,8 @@
 package com.siberika.idea.pascal.lang.compiled;
 
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.util.text.StringUtil;
 import com.siberika.idea.pascal.PascalBundle;
-import org.apache.commons.lang.StringUtils;
 import org.jetbrains.annotations.NotNull;
 import org.xml.sax.Attributes;
 import org.xml.sax.SAXException;
@@ -36,8 +36,8 @@ import java.util.TreeMap;
 public class PPUDumpParser {
 
     private static final Logger LOG = Logger.getInstance(PPUDumpParser.class);
-    public static final String UNRESOLVED_INTERNAL = "__INTERNAL__";
-    public static final String INDENT = "  ";
+    static final String UNRESOLVED_INTERNAL = "__INTERNAL__";
+    static final String INDENT = "  ";
     private static final String LF = "\n@";
 
     public static Section parse(InputStream inputStream, PPUDecompilerCache cache) throws ParseException, ParserConfigurationException, SAXException, IOException {
@@ -149,9 +149,9 @@ public class PPUDumpParser {
             return res;
         }
 
-        public final Map<String, String> idNameMap = new HashMap<String, String>();
-        public final Map<String, String> symidNameMap = new HashMap<String, String>();
-        public final List<String> units = new ArrayList<String>();
+        final Map<String, String> idNameMap = new HashMap<String, String>();
+        final Map<String, String> symidNameMap = new HashMap<String, String>();
+        final List<String> units = new ArrayList<String>();
 
         private Deque<Section> stack = new ArrayDeque<Section>();
         private StringBuilder chars = new StringBuilder();
@@ -231,10 +231,10 @@ public class PPUDumpParser {
                         result.symidNameMap = symidNameMap;
                     }
                 } else {
-                    if (!StringUtils.isBlank(sec.getDataStr("id"))) {
+                    if (!StringUtil.isEmpty(sec.getDataStr("id"))) {
                         idNameMap.put(sec.getDataStr("id"), sec.sb.toString());
                     }
-                    if (!StringUtils.isBlank(sec.getDataStr("symid"))) {
+                    if (!StringUtil.isEmpty(sec.getDataStr("symid"))) {
                         symidNameMap.put(sec.getDataStr("symid"), sec.sb.toString());
                     }
                 }
@@ -260,6 +260,8 @@ public class PPUDumpParser {
                 } else if ("/ptr".equalsIgnoreCase(sec.type)) {
                     sec.sb.append("^");
                     appendReference(sec, sec.sb.length(), "ptr", "", "", UNRESOLVED_INTERNAL);
+                } else if ("/type".equalsIgnoreCase(sec.type)) {
+                    appendReference(sec, sec.sb.length(), "ref", "", "", UNRESOLVED_INTERNAL);
                 } else if ("/set".equalsIgnoreCase(sec.type)) {
                     sec.sb.append("set");
                     appendReference(sec, sec.sb.length(), "eltype", " of ", "", UNRESOLVED_INTERNAL);
@@ -321,14 +323,14 @@ public class PPUDumpParser {
                 StringBuilder psb = new StringBuilder(LF + "type ");
                 psb.append(sec.name).append(" = ").append(sec.getDataStr("objtype"));
                 int pos = psb.length();
-                if (!StringUtils.isBlank(sec.getDataStr("iid"))) {
+                if (!StringUtil.isEmpty(sec.getDataStr("iid"))) {
                     psb.append(LF).append(INDENT).append("['").append(sec.getDataStr("iid")).append("']");
                 }
                 sec.insertText(0, psb.toString());
                 appendReference(sec, pos, "ancestor", "(", ")", UNRESOLVED_INTERNAL);
             } else if ("/rec".equalsIgnoreCase(sec.type)) {
                 StringBuilder psb = new StringBuilder("");
-                if (!StringUtils.isBlank(sec.name)) {
+                if (!StringUtil.isEmpty(sec.name)) {
                     psb.append(LF).append("type ").append(sec.name).append(" = record");
                 } else {
                     psb.append("record ");
@@ -350,7 +352,8 @@ public class PPUDumpParser {
                 sec.sb.append(")");
                 appendLineEnd(sec);
             } else if ("/proctype".equalsIgnoreCase(sec.type)) {
-                if (StringUtils.isBlank(sec.getDataStr("rettype/id"))) {
+                String returnTypeId = sec.getDataStr("rettype/id");
+                if (StringUtil.isEmpty(returnTypeId) || "$void".equalsIgnoreCase(idNameMap.get(returnTypeId))) {
                     sec.insertText(0, "procedure ");
                 } else {
                     sec.insertText(0, "function ");
@@ -386,20 +389,20 @@ public class PPUDumpParser {
         }
 
         private void appendLineEnd(Section sec) {
-            if (!StringUtils.isBlank(sec.name)) {
+            if (!StringUtil.isEmpty(sec.name)) {
                 sec.sb.append(";\n");
             }
         }
 
         private void insertTypeDeclName(Section sec) {
-            if (!StringUtils.isBlank(sec.name)) {
+            if (!StringUtil.isEmpty(sec.name)) {
                 sec.sb.append(LF).append("type ").append(sec.name).append(" = ");
             }
         }
 
         private void appendIfAllNotBlank(StringBuilder sb, String...args) {
             for (String arg : args) {
-                if (StringUtils.isBlank(arg)) {
+                if (StringUtil.isEmpty(arg)) {
                     return;
                 }
             }
@@ -447,7 +450,7 @@ public class PPUDumpParser {
             if (id != null) {
                 @SuppressWarnings("SuspiciousMethodCalls")
                 String ref = nameMap != null ? nameMap.get(id) : null;
-                if (StringUtils.isBlank(ref)) {
+                if (StringUtil.isEmpty(ref)) {
                     pos = sec.insertText(pos, prefix + postfix);
                     if (idNameMap != null) {
                         if (sec.undefined != null) {
@@ -456,9 +459,7 @@ public class PPUDumpParser {
                     } else {
                         pos = sec.insertText(pos, prefix + def + postfix);
                     }
-                } else if (ref.startsWith("$")) {
-                    pos = sec.insertText(pos, def);
-                } else {
+                } else if (!("$formal".equalsIgnoreCase(ref) || "$void".equalsIgnoreCase(ref))) {
                     pos = sec.insertText(pos, prefix + ref + postfix);
                 }
             }
@@ -502,7 +503,7 @@ public class PPUDumpParser {
                 } else {
                     @SuppressWarnings("SuspiciousMethodCalls")
                     String ref = nameMap.get(id);
-                    if (StringUtils.isBlank(ref) || (ref.startsWith("$"))) {
+                    if (StringUtil.isEmpty(ref) || (ref.startsWith("$"))) {
                         res = defalut;
                     } else {
                         res = res + ref;
@@ -568,7 +569,8 @@ public class PPUDumpParser {
                             sec.name = NAME_SUB.get(txt);
                         }
                     } else {
-                        sec.name = txt;
+                        int pos = txt.indexOf('$');
+                        sec.name = pos < 1 ? txt : txt.substring(0, pos);
                     }
                     if (!path.endsWith(sec.type + "/name")) {
                         LOG.info("ERROR: ! name for section: " + sec.type + ", path: " + path);
@@ -582,11 +584,11 @@ public class PPUDumpParser {
                     }
                 } else if ("id".equalsIgnoreCase(qName) && (sec.name != null)) {
                     if (null == sec.dataPrefix) {
-                        idNameMap.put(txt.toString(), sec.name);
+                        idNameMap.put(txt, sec.name);
                     }
                 } else if ("symid".equalsIgnoreCase(qName) && (sec.name != null)) {
                     if (null == sec.dataPrefix) {
-                        symidNameMap.put(txt.toString(), sec.name);
+                        symidNameMap.put(txt, sec.name);
                     }
                 } else if ("value".equalsIgnoreCase(qName)) {
                     if ("/units".equalsIgnoreCase(sec.type)) {
@@ -595,7 +597,15 @@ public class PPUDumpParser {
                         sec.putData(sec.type + "/" + txt, "");
                     }
                     if (null == sec.dataPrefix) {
-                        sec.sb.append(txt);
+                        if (sec.data.get(sec.type + "/isString") != null) {
+                            sec.sb.append('\'').append(handleStringData(txt)).append('\'');
+                        } else {
+                            sec.sb.append(txt);
+                        }
+                    }
+                } else if ("valtype".equalsIgnoreCase(qName)) {
+                    if ("string".equalsIgnoreCase(txt)) {
+                        sec.putData(sec.type + "/isString", Boolean.TRUE);
                     }
                 }
                 if (txt.length() > 0) {
@@ -604,6 +614,10 @@ public class PPUDumpParser {
             }
             chars = new StringBuilder();
             path = path.substring(0, path.lastIndexOf("/"));
+        }
+
+        private String handleStringData(String txt) {
+            return txt.replaceAll("'", "''").replaceAll("\n", "'#10'").replaceAll("\r", "'#13'");
         }
 
         public void fixupUndefined(Section sec) {
@@ -734,7 +748,7 @@ public class PPUDumpParser {
         }
 
         public void insertVisibility(int pos, String defaultVisibility) {
-            insertText(pos, StringUtils.isBlank(getDataStr("visibility")) ? defaultVisibility : getDataStr("visibility") + " ");
+            insertText(pos, StringUtil.isEmpty(getDataStr("visibility")) ? defaultVisibility : getDataStr("visibility") + " ");
         }
 
         public void merge(Section sec) {
@@ -767,7 +781,7 @@ public class PPUDumpParser {
         }
 
         public int insertText(int pos, String text) {
-            if (!StringUtils.isBlank(text)) {
+            if (!StringUtil.isEmpty(text)) {
                 return doInsertText(pos, text);
             } else {
                 return pos;
@@ -789,8 +803,8 @@ public class PPUDumpParser {
         }
 
         public boolean isAnonimous() {
-            return StringUtils.isBlank(name) &&
-                    (!StringUtils.isBlank(getDataStr("id")) || !StringUtils.isBlank(getDataStr("symid")));
+            return StringUtil.isEmpty(name) &&
+                    (!StringUtil.isEmpty(getDataStr("id")) || !StringUtil.isEmpty(getDataStr("symid")));
         }
 
         public void setIndent(int size) {

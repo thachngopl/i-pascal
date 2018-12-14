@@ -14,6 +14,7 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.projectRoots.AdditionalDataConfigurable;
 import com.intellij.openapi.projectRoots.Sdk;
+import com.intellij.openapi.ui.ComboBox;
 import com.intellij.openapi.ui.TextBrowseFolderListener;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.openapi.util.Disposer;
@@ -28,6 +29,7 @@ import com.intellij.uiDesigner.core.GridConstraints;
 import com.intellij.uiDesigner.core.GridLayoutManager;
 import com.intellij.util.FileContentUtil;
 import com.intellij.util.indexing.FileBasedIndex;
+import com.intellij.util.ui.JBUI;
 import com.siberika.idea.pascal.DCUFileType;
 import com.siberika.idea.pascal.PPUFileType;
 import com.siberika.idea.pascal.PascalBundle;
@@ -37,6 +39,8 @@ import org.jetbrains.annotations.NotNull;
 import javax.swing.*;
 import javax.swing.border.LineBorder;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -51,16 +55,21 @@ public class PascalSdkConfigUI implements AdditionalDataConfigurable {
     private TextFieldWithBrowseButton compilerCommandEdit;
 
     private Sdk sdk;
+    private JTextField namespacesEdit;
     private JTextField compilerOptionsEdit;
+    private JTextField compilerOptionsDebugEdit;
     private TextFieldWithBrowseButton decompilerCommandEdit;
     private TextFieldWithBrowseButton gdbCommandEdit;
+    private ComboBox debugBackendCBox;
     private JTextField gdbOptionsEdit;
     private JCheckBox gdbResolveNames;
     private JCheckBox gdbRedirectConsole;
+    private JCheckBox debugBreakFullNames;
     private JCheckBox gdbRetrieveChilds;
     private JCheckBox gdbUseGdbInit;
     private final Map<String, JComponent> keyComponentMap = new HashMap<String, JComponent>();
 
+    @Override
     public JComponent createComponent() {
         TabbedPaneWrapper myTabbedPane = new TabbedPaneWrapper(myDisposable);
         myTabbedPane.addTab(PascalBundle.message("ui.sdkSettings.tab.general"), createGeneralOptionsPanel());
@@ -71,12 +80,16 @@ public class PascalSdkConfigUI implements AdditionalDataConfigurable {
 
         keyComponentMap.clear();
         keyComponentMap.put(PascalSdkData.Keys.COMPILER_COMMAND.getKey(), compilerCommandEdit);
+        keyComponentMap.put(PascalSdkData.Keys.COMPILER_NAMESPACES.getKey(), namespacesEdit);
         keyComponentMap.put(PascalSdkData.Keys.COMPILER_OPTIONS.getKey(), compilerOptionsEdit);
+        keyComponentMap.put(PascalSdkData.Keys.COMPILER_OPTIONS_DEBUG.getKey(), compilerOptionsDebugEdit);
         keyComponentMap.put(PascalSdkData.Keys.DECOMPILER_COMMAND.getKey(), decompilerCommandEdit);
 
+        keyComponentMap.put(PascalSdkData.Keys.DEBUGGER_BACKEND.getKey(), debugBackendCBox);
         keyComponentMap.put(PascalSdkData.Keys.DEBUGGER_COMMAND.getKey(), gdbCommandEdit);
         keyComponentMap.put(PascalSdkData.Keys.DEBUGGER_OPTIONS.getKey(), gdbOptionsEdit);
         keyComponentMap.put(PascalSdkData.Keys.DEBUGGER_REDIRECT_CONSOLE.getKey(), gdbRedirectConsole);
+        keyComponentMap.put(PascalSdkData.Keys.DEBUGGER_BREAK_FULL_NAME.getKey(), debugBreakFullNames);
         keyComponentMap.put(PascalSdkData.Keys.DEBUGGER_RETRIEVE_CHILDS.getKey(), gdbRetrieveChilds);
         keyComponentMap.put(PascalSdkData.Keys.DEBUGGER_RESOLVE_NAMES.getKey(), gdbResolveNames);
         keyComponentMap.put(PascalSdkData.Keys.DEBUGGER_USE_GDBINIT.getKey(), gdbUseGdbInit);
@@ -87,20 +100,31 @@ public class PascalSdkConfigUI implements AdditionalDataConfigurable {
     private JPanel createGeneralOptionsPanel() {
         JPanel panel = new JPanel();
         panel.setBorder(new LineBorder(JBColor.border()));
-        panel.setLayout(new GridLayoutManager(4, 2, new Insets(0, 0, 0, 0), -1, -1));
+        panel.setLayout(new GridLayoutManager(6, 2, JBUI.emptyInsets(), -1, -1));
 
-        addLabel(panel, PascalBundle.message("ui.sdkSettings.compiler.command"), 0);
-        compilerCommandEdit = addFileFieldWithBrowse(panel, 0);
+        int row = 0;
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.compiler.command"), row);
+        compilerCommandEdit = addFileFieldWithBrowse(panel, row++);
 
-        addLabel(panel, PascalBundle.message("ui.sdkSettings.compiler.options"), 1);
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.compiler.namespaces"), row);
+        namespacesEdit = new JTextField();
+        panel.add(namespacesEdit, new GridConstraints(row++, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL,
+                GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW,
+                null, null, null, 0, false));
+
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.compiler.options"), row);
         compilerOptionsEdit = new JTextField();
-        panel.add(compilerOptionsEdit, new GridConstraints(1, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
+        panel.add(compilerOptionsEdit, new GridConstraints(row++, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
 
-        addLabel(panel, PascalBundle.message("ui.sdkSettings.decompiler.command"), 2);
-        decompilerCommandEdit = addFileFieldWithBrowse(panel, 2);
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.compiler.options.debug"), row);
+        compilerOptionsDebugEdit = new JTextField();
+        panel.add(compilerOptionsDebugEdit, new GridConstraints(row++, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
+
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.decompiler.command"), row);
+        decompilerCommandEdit = addFileFieldWithBrowse(panel, row++);
 
         JLabel statusLabel = new JLabel();
-        panel.add(statusLabel, new GridConstraints(3, 0, 1, 2, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_HORIZONTAL,
+        panel.add(statusLabel, new GridConstraints(row, 0, 1, 2, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_HORIZONTAL,
                 GridConstraints.SIZEPOLICY_FIXED, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 1, false));
         if (BasePascalSdkType.getAdditionalData(sdk).getBoolean(PascalSdkData.Keys.DELPHI_IS_STARTER)) {
             statusLabel.setText(PascalBundle.message("ui.sdkSettings.delphi.starter.warning"));
@@ -111,31 +135,54 @@ public class PascalSdkConfigUI implements AdditionalDataConfigurable {
     private JPanel createDebuggerOptionsPanel() {
         JPanel panel = new JPanel();
         panel.setBorder(new LineBorder(JBColor.border()));
-        panel.setLayout(new GridLayoutManager(6, 2, new Insets(0, 0, 0, 0), -1, -1));
+        panel.setLayout(new GridLayoutManager(9, 2, JBUI.emptyInsets(), -1, -1));
 
-        addLabel(panel, PascalBundle.message("ui.sdkSettings.gdb.command"), 0);
-        gdbCommandEdit = addFileFieldWithBrowse(panel, 0);
-        panel.add(gdbCommandEdit, new GridConstraints(0, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
+        int row = 0;
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.debug.backend"), row);
+        debugBackendCBox = new ComboBox(PascalSdkData.DEBUGGER_BACKENDS);
+        panel.add(debugBackendCBox, new GridConstraints(row++, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
 
-        addLabel(panel, PascalBundle.message("ui.sdkSettings.gdb.options"), 1);
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.gdb.command"), row);
+        gdbCommandEdit = addFileFieldWithBrowse(panel, row);
+        panel.add(gdbCommandEdit, new GridConstraints(row++, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
+
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.gdb.options"), row);
         gdbOptionsEdit = new JTextField();
-        panel.add(gdbOptionsEdit, new GridConstraints(1, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
+        panel.add(gdbOptionsEdit, new GridConstraints(row++, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
 
-        addLabel(panel, PascalBundle.message("ui.sdkSettings.gdb.redirect.console"), 2);
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.gdb.redirect.console"), row);
         gdbRedirectConsole = new JCheckBox();
-        panel.add(gdbRedirectConsole, new GridConstraints(2, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
+        panel.add(gdbRedirectConsole, new GridConstraints(row++, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
 
-        addLabel(panel, PascalBundle.message("ui.sdkSettings.gdb.retrieve.childs"), 3);
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.debug.break.fullnames"), row);
+        debugBreakFullNames = new JCheckBox();
+        panel.add(debugBreakFullNames, new GridConstraints(row++, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
+
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.gdb.retrieve.childs"), row);
         gdbRetrieveChilds = new JCheckBox();
-        panel.add(gdbRetrieveChilds, new GridConstraints(3, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
+        panel.add(gdbRetrieveChilds, new GridConstraints(row++, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
 
-        addLabel(panel, PascalBundle.message("ui.sdkSettings.gdb.resolve.names"), 4);
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.gdb.resolve.names"), row);
         gdbResolveNames = new JCheckBox();
-        panel.add(gdbResolveNames, new GridConstraints(4, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
+        panel.add(gdbResolveNames, new GridConstraints(row++, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
 
-        addLabel(panel, PascalBundle.message("ui.sdkSettings.gdb.use.gdbinit"), 5);
+        addLabel(panel, PascalBundle.message("ui.sdkSettings.gdb.use.gdbinit"), row);
         gdbUseGdbInit = new JCheckBox();
-        panel.add(gdbUseGdbInit, new GridConstraints(5, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
+        panel.add(gdbUseGdbInit, new GridConstraints(row++, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
+
+        final JTextArea statusLabel = new JTextArea();
+        statusLabel.setLineWrap(true);
+        statusLabel.setMinimumSize(new Dimension(100, 20));
+        panel.add(statusLabel, new GridConstraints(row++, 0, 1, 2, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_HORIZONTAL,
+                GridConstraints.SIZEPOLICY_CAN_SHRINK, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 1, false));
+        statusLabel.setText(PascalBundle.message("ui.sdkSettings.lldb.variables.warning"));
+
+        debugBackendCBox.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                statusLabel.setVisible(PascalSdkData.DEBUGGER_BACKENDS[1].equals(debugBackendCBox.getSelectedItem()));
+            }
+        });
 
         return panel;
     }
@@ -167,9 +214,6 @@ public class PascalSdkConfigUI implements AdditionalDataConfigurable {
     }
 
     public void apply() throws ConfigurationException {
-        for (Map.Entry<String, JComponent> entry : keyComponentMap.entrySet()) {
-            BasePascalSdkType.getAdditionalData(sdk).setValue(entry.getKey(), getValue(keyComponentMap.get(entry.getKey())));
-        }
         if ((decompilerCommandEdit != null) &&
                 !getValue(keyComponentMap.get(PascalSdkData.Keys.DECOMPILER_COMMAND.getKey())).equals(
                         BasePascalSdkType.getAdditionalData(sdk).getValue(PascalSdkData.Keys.DECOMPILER_COMMAND.getKey()))
@@ -177,6 +221,10 @@ public class PascalSdkConfigUI implements AdditionalDataConfigurable {
             BasePascalSdkType.getAdditionalData(sdk).setValue(PascalSdkData.Keys.DECOMPILER_CACHE.getKey(), null);
             invalidateCompiledCache();
         }
+        for (Map.Entry<String, JComponent> entry : keyComponentMap.entrySet()) {
+            BasePascalSdkType.getAdditionalData(sdk).setValue(entry.getKey(), getValue(keyComponentMap.get(entry.getKey())));
+        }
+        BasePascalSdkType.invalidateSdkCaches();
     }
 
     private Object getValue(JComponent control) {
@@ -186,6 +234,8 @@ public class PascalSdkConfigUI implements AdditionalDataConfigurable {
             return ((JTextField) control).getText();
         } else if (control instanceof JCheckBox) {
             return ((JCheckBox) control).isSelected() ? PascalSdkData.SDK_DATA_TRUE : "0";
+        } else if (control instanceof ComboBox) {
+            return ((ComboBox) control).getSelectedItem();
         } else {
             throw new IllegalStateException("getValue: Invalid control: " + ((control != null) ? control.getClass() : "null"));
         }
@@ -230,6 +280,8 @@ public class PascalSdkConfigUI implements AdditionalDataConfigurable {
             ((JTextField) control).setText((String) value);
         } else if (control instanceof JCheckBox) {
             ((JCheckBox) control).setSelected(PascalSdkData.SDK_DATA_TRUE.equals(value));
+        } else if (control instanceof ComboBox) {
+            ((ComboBox) control).setSelectedItem(value);
         } else {
             throw new IllegalStateException("setValue: Invalid control: " + ((control != null) ? control.getClass() : "null"));
         }

@@ -4,6 +4,7 @@ import com.intellij.execution.actions.ConfigurationContext;
 import com.intellij.execution.actions.ConfigurationFromContext;
 import com.intellij.execution.actions.RunConfigurationProducer;
 import com.intellij.execution.configurations.RunConfiguration;
+import com.intellij.lang.ASTNode;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -13,7 +14,8 @@ import com.siberika.idea.pascal.lang.psi.PasBlockBody;
 import com.siberika.idea.pascal.lang.psi.PasBlockGlobal;
 import com.siberika.idea.pascal.lang.psi.PasModule;
 import com.siberika.idea.pascal.lang.psi.PasProgramModuleHead;
-import com.siberika.idea.pascal.lang.psi.impl.PascalModule;
+import com.siberika.idea.pascal.lang.psi.PasTypes;
+import com.siberika.idea.pascal.lang.psi.PascalModule;
 import com.siberika.idea.pascal.module.PascalModuleType;
 import com.siberika.idea.pascal.util.PsiUtil;
 import org.jetbrains.annotations.NotNull;
@@ -30,7 +32,7 @@ public class PascalRunContextConfigurationProducer extends RunConfigurationProdu
 
     @Override
     protected boolean setupConfigurationFromContext(PascalRunConfiguration configuration, ConfigurationContext context, Ref<PsiElement> sourceElement) {
-        if (isProgramElement(sourceElement.get())) {
+        if (isProgramLeafElement(sourceElement.get())) {
             setupConf(context, configuration, true);
             return true;
         }
@@ -41,15 +43,12 @@ public class PascalRunContextConfigurationProducer extends RunConfigurationProdu
     public boolean isConfigurationFromContext(PascalRunConfiguration configuration, ConfigurationContext context) {
         return (configuration.getConfigurationModule().getModule() == context.getModule()) &&
                 (context.getPsiLocation() != null) &&
-                (configuration.getProgramFileName().equals(getMainFile(context.getPsiLocation()).getPath()));
+                (configuration.getProgramFileName().equals(getProgramFileName(context)));
     }
 
-    static boolean isProgramElement(PsiElement element) {
-        if (element instanceof PasProgramModuleHead || element instanceof PasBlockBody && element.getParent() instanceof PasBlockGlobal) {
-            PasModule module = PsiUtil.getElementPasModule(element);
-            return module != null && module.getModuleType() == PascalModule.ModuleType.PROGRAM;
-        }
-        return false;
+    private String getProgramFileName(@NotNull ConfigurationContext context) {
+        VirtualFile mainFile = context.getPsiLocation() != null ? getMainFile(context.getPsiLocation()) : null;
+        return mainFile != null ? mainFile.getNameWithoutExtension() : null;
     }
 
     private void setupConf(ConfigurationContext context, RunConfiguration conf, boolean setupModule) {
@@ -58,11 +57,12 @@ public class PascalRunContextConfigurationProducer extends RunConfigurationProdu
             Module module = context.getModule();
             if (PascalModuleType.isPascalModule(module) && context.getPsiLocation() != null) {
                 conf.setName(module.getName());
-                ((PascalRunConfiguration) conf).setModule(module);
+                PascalRunConfiguration pasConf = (PascalRunConfiguration) conf;
+                pasConf.setModule(module);
+                pasConf.setProgramFileName(getProgramFileName(context));
                 VirtualFile mainFile = getMainFile(context.getPsiLocation());
                 if (mainFile != null) {
                     conf.setName(String.format("[%s] %s", module.getName(), mainFile.getNameWithoutExtension()));
-                    ((PascalRunConfiguration) conf).setProgramFileName(mainFile.getNameWithoutExtension());
                     if (setupModule) {
                         PascalModuleType.setMainFile(module, mainFile);
                     }
@@ -74,9 +74,7 @@ public class PascalRunContextConfigurationProducer extends RunConfigurationProdu
     @Nullable
     @Override
     public ConfigurationFromContext createConfigurationFromContext(ConfigurationContext context) {
-        ConfigurationFromContext conf = super.createConfigurationFromContext(context);
-        setupConf(context, conf != null ? conf.getConfiguration() : null, true);
-        return conf;
+        return isProgramLeafElement(context.getPsiLocation()) ? super.createConfigurationFromContext(context) : null;
     }
 
     private static VirtualFile getMainFile(@NotNull PsiElement element) {
@@ -84,4 +82,18 @@ public class PascalRunContextConfigurationProducer extends RunConfigurationProdu
         return mainFile != null ? mainFile.getVirtualFile() : null;
     }
 
+    public static boolean isProgramLeafElement(PsiElement element) {
+        ASTNode node = element.getNode();
+        if ((null == node) || ((node.getElementType() != PasTypes.BEGIN) && (node.getElementType() != PasTypes.PROGRAM))) {
+            return false;
+        }
+        if ((element.getFirstChild() == null) && (element.getParent().getFirstChild() == element) &&
+                (element.getParent() instanceof PasProgramModuleHead
+                        || element.getParent().getParent() instanceof PasBlockBody && element.getParent().getParent().getParent() instanceof PasBlockGlobal)
+                ) {
+            PasModule module = PsiUtil.getElementPasModule(element);
+            return module != null && module.getModuleType() == PascalModule.ModuleType.PROGRAM;
+        }
+        return false;
+    }
 }

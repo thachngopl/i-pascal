@@ -35,6 +35,7 @@ import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.SmartList;
 import com.siberika.idea.pascal.PascalBundle;
 import com.siberika.idea.pascal.ide.actions.SectionToggle;
+import com.siberika.idea.pascal.lang.context.ContextUtil;
 import com.siberika.idea.pascal.lang.psi.PasArgumentList;
 import com.siberika.idea.pascal.lang.psi.PasAssignPart;
 import com.siberika.idea.pascal.lang.psi.PasBlockBody;
@@ -51,6 +52,7 @@ import com.siberika.idea.pascal.lang.psi.PasFormalParameter;
 import com.siberika.idea.pascal.lang.psi.PasFormalParameterSection;
 import com.siberika.idea.pascal.lang.psi.PasFullyQualifiedIdent;
 import com.siberika.idea.pascal.lang.psi.PasImplDeclSection;
+import com.siberika.idea.pascal.lang.psi.PasInterfaceTypeDecl;
 import com.siberika.idea.pascal.lang.psi.PasReferenceExpr;
 import com.siberika.idea.pascal.lang.psi.PasRoutineImplDecl;
 import com.siberika.idea.pascal.lang.psi.PasTypeDeclaration;
@@ -59,10 +61,10 @@ import com.siberika.idea.pascal.lang.psi.PasTypes;
 import com.siberika.idea.pascal.lang.psi.PasUnitInterface;
 import com.siberika.idea.pascal.lang.psi.PasVarSection;
 import com.siberika.idea.pascal.lang.psi.PascalNamedElement;
+import com.siberika.idea.pascal.lang.psi.PascalRoutine;
 import com.siberika.idea.pascal.lang.psi.PascalStructType;
 import com.siberika.idea.pascal.lang.psi.impl.PasField;
 import com.siberika.idea.pascal.lang.psi.impl.PascalExpression;
-import com.siberika.idea.pascal.lang.psi.impl.PascalRoutineImpl;
 import com.siberika.idea.pascal.util.DocUtil;
 import com.siberika.idea.pascal.util.EditorUtil;
 import com.siberika.idea.pascal.util.PosUtil;
@@ -253,7 +255,7 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
     }
 
     // Fills data parent and offset and returns True if section for new member already exists
-    private static boolean fillMemberPlace(PsiElement scope, FixActionData data, int targetVisibility, PasField.FieldType type, Class<? extends PsiElement> sectionClass, Class<? extends PsiElement> sectionItemClass) {
+    private static boolean fillMemberPlace(PsiElement scope, FixActionData data, PasField.Visibility targetVisibility, PasField.FieldType type, Class<? extends PsiElement> sectionClass, Class<? extends PsiElement> sectionItemClass) {
         if (scope instanceof PascalStructType) {
             data.text = "\n" + PLACEHOLDER_DATA;
             data.parent = scope;
@@ -274,7 +276,7 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
 
     String calcType(FixActionData data) {
         String res = "T";
-        if (PsiUtil.isAssignLeftPart(data.element)) {
+        if (ContextUtil.isAssignLeftPart(data.element)) {
             String type = PascalExpression.calcAssignStatementType(PsiUtil.skipToExpressionParent(data.element));
             res = type != null ? type : res;
         }
@@ -284,7 +286,7 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
     public static class ActionCreateParameter extends PascalActionDeclare {
 
         private FixActionData otherSectionData = null;
-        private PascalRoutineImpl routine;
+        private PascalRoutine routine;
 
         public ActionCreateParameter(String name, PascalNamedElement element, PsiElement scope) {
             super(name, element, scope);
@@ -292,12 +294,12 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
 
         @Override
         protected void onInvoke() {
-            if (scope instanceof PascalRoutineImpl) {
-                routine = (PascalRoutineImpl) scope;
-                PsiElement other = SectionToggle.retrieveDeclaration((PascalRoutineImpl) scope, true);
-                if (other instanceof PascalRoutineImpl) {
-                    if (!SectionToggle.hasParametersOrReturnType((PascalRoutineImpl) scope) && SectionToggle.hasParametersOrReturnType((PascalRoutineImpl) other)) {
-                        routine = (PascalRoutineImpl) other;
+            if (scope instanceof PascalRoutine) {
+                routine = (PascalRoutine) scope;
+                PsiElement other = SectionToggle.retrieveDeclaration((PascalRoutine) scope, true);
+                if (other instanceof PascalRoutine) {
+                    if (!SectionToggle.hasParametersOrReturnType((PascalRoutine) scope) && SectionToggle.hasParametersOrReturnType((PascalRoutine) other)) {
+                        routine = (PascalRoutine) other;
                     } else {
                         otherSectionData = new FixActionData(fixActionDataArray.get(0).element);
                         otherSectionData.parent = other;
@@ -314,7 +316,7 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
             }
             final String tpl = "%s: $%s$";
             if (data == otherSectionData) {
-                routine = (PascalRoutineImpl) data.parent;
+                routine = (PascalRoutine) data.parent;
             }
             PasFormalParameterSection section = routine.getFormalParameterSection();
             if (section != null) {
@@ -359,7 +361,7 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
         @Override
         void calcData(final PsiFile file, final FixActionData data) {
             String prefix = "";
-            if (!fillMemberPlace(getScope(file, scope), data, PasField.Visibility.PRIVATE.ordinal(), PasField.FieldType.VARIABLE, PasVarSection.class, null)) {
+            if (!fillMemberPlace(getScope(file, scope), data, PasField.Visibility.PRIVATE, PasField.FieldType.VARIABLE, PasVarSection.class, null)) {
                 prefix = "\nvar ";
             }
             String type = defaultType != null ? defaultType : calcType(data);
@@ -398,12 +400,12 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
         @Override
         void calcData(final PsiFile file, final FixActionData data) {
             if (data == varData) {
-                if (fillMemberPlace(scope, data, PasField.Visibility.PRIVATE.ordinal(), PasField.FieldType.VARIABLE, PasVarSection.class, null)) {
+                if (fillMemberPlace(scope, data, PasField.Visibility.PRIVATE, PasField.FieldType.VARIABLE, PasVarSection.class, null)) {
                     data.text = data.text.replace(PLACEHOLDER_DATA, String.format("F%s: $%s$;", StringUtil.capitalize(data.element.getName()), TPL_VAR_TYPE));
                     data.dataType = FixActionData.DataType.COMPLEX_TEMPLATE;
                 }
             } else {
-                if (fillMemberPlace(scope, data, PasField.Visibility.PUBLIC.ordinal(), PasField.FieldType.PROPERTY, PasVarSection.class, null)) {
+                if (fillMemberPlace(scope, data, PasField.Visibility.PUBLIC, PasField.FieldType.PROPERTY, PasVarSection.class, null)) {
                     data.text = data.text.replace(PLACEHOLDER_DATA, String.format("property %1$s: $%2$s$ read F%1$s write F%1$s;", StringUtil.capitalize(data.element.getName()), TPL_VAR_TYPE));
                 }
             }
@@ -433,7 +435,7 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
         @Override
         void calcData(final PsiFile file, final FixActionData data) {
             String prefix = "";
-            if (!fillMemberPlace(getScope(file, scope), data, PasField.Visibility.PRIVATE.ordinal(), PasField.FieldType.CONSTANT, PasConstSection.class, PasConstDeclaration.class)) {
+            if (!fillMemberPlace(getScope(file, scope), data, PasField.Visibility.PRIVATE, PasField.FieldType.CONSTANT, PasConstSection.class, PasConstDeclaration.class)) {
                 prefix = "\nconst ";
             }
             if (data.parent != null) {
@@ -472,7 +474,7 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
         @Override
         void calcData(final PsiFile file, final FixActionData data) {
             PasEnumType enumType = (PasEnumType) scope;
-            PsiElement last = PsiUtil.sortByStart(Iterables.getLast(enumType.getNamedIdentList(), null), Iterables.getLast(enumType.getExpressionList(), null), false).getFirst();
+            PsiElement last = PsiUtil.sortByStart(Iterables.getLast(enumType.getNamedIdentDeclList(), null), Iterables.getLast(enumType.getExpressionList(), null), false).getFirst();
             data.parent = enumType;
             data.offset = -1;
             if (last != null) {
@@ -496,7 +498,7 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
         @Override
         void calcData(final PsiFile file, final FixActionData data) {
             String prefix = "";
-            if (!fillMemberPlace(getScope(file, scope), data, PasField.Visibility.PRIVATE.ordinal(), PasField.FieldType.TYPE, PasTypeSection.class, PasTypeDeclaration.class)) {
+            if (!fillMemberPlace(getScope(file, scope), data, PasField.Visibility.PRIVATE, PasField.FieldType.TYPE, PasTypeSection.class, PasTypeDeclaration.class)) {
                 prefix = "\ntype ";
             }
             if (data.parent != null) {
@@ -549,6 +551,8 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
                 if (parent instanceof PasAssignPart) {
                     type = PascalExpression.calcAssignExpectedType(parent.getParent());
                     type = type != null ? type : "";
+                } else if (parent instanceof PasArgumentList) {
+                    type = "";  // TODO: infere actual type
                 }
             }
             if ((scope instanceof PascalStructType) && (null == callScope)) {
@@ -563,13 +567,14 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
             if (scope instanceof PasRoutineImplDecl) {
                 block = scope;
             } else {
-                block = (callScope instanceof PascalRoutineImpl) ? callScope : PsiTreeUtil.getParentOfType(data.element, PasBlockBody.class);
+                block = (callScope instanceof PascalRoutine) ? callScope : PsiTreeUtil.getParentOfType(data.element, PasBlockBody.class);
             }
             block = block != null ? block : PsiTreeUtil.getParentOfType(data.element, PasCompoundStatement.class);
             if (block != null) {
                 data.offset = block.getTextRange().getStartOffset();
                 data.parent = block.getParent();
                 Pair<String, Map<String, String>> arguments = calcArguments(data);
+                String params = (arguments.second != null) && (arguments.second.size() > 0) ? arguments.first : "";
                 String prefix = scope instanceof PascalStructType ? ((PascalStructType) scope).getName() + "." : "";
                 if (returnType != null) {
                     arguments.getSecond().put(TPL_VAR_RETURN_TYPE, returnType);
@@ -577,16 +582,16 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
                             prefix, data.element.getName(), arguments.getFirst(), TPL_VAR_RETURN_TYPE, TPL_VAR_CODE), arguments.getSecond());
                 } else {
                     data.createTemplate(String.format("\n\nprocedure %s%s(%s);\nbegin\n$%s$\nend;",
-                            prefix, data.element.getName(), arguments.getFirst(), TPL_VAR_CODE), arguments.getSecond());
+                            prefix, data.element.getName(), params, TPL_VAR_CODE), arguments.getSecond());
                 }
             }
         }
 
         private void addToInterface(FixActionData data, String returnType) {
-            fillMemberPlace(scope, data, PasField.Visibility.PUBLIC.ordinal(), PasField.FieldType.ROUTINE, null, null);
+            fillMemberPlace(scope, data, PasField.Visibility.PUBLIC, PasField.FieldType.ROUTINE, null, null);
             Pair<String, Map<String, String>> arguments;
             if (spec != null) {
-                if (PsiUtil.isPropertyGetter(spec)) {
+                if (ContextUtil.isPropertyGetter(spec)) {
                     Map<String, String> defaults = new SmartHashMap<String, String>();
                     arguments = Pair.create("", defaults);
                 } else {
@@ -645,17 +650,17 @@ public abstract class PascalActionDeclare extends BaseIntentionAction {
             try {
                 if (data.parent != null) {
                     PsiElement routine = PsiUtil.findElementAt(data.parent, data.offset - data.parent.getTextRange().getStartOffset());
-                    if (!(routine instanceof PascalRoutineImpl)) {
+                    if (!(routine instanceof PascalRoutine)) {
                         routine = routine != null ? routine.getParent() : null;
                     }
                     if (scope instanceof PascalStructType) {
-                        if (null == callScope) {                   // Scope specified as FQN part
-                            if (routine instanceof PascalRoutineImpl) {
+                        if (!(scope instanceof PasInterfaceTypeDecl) && null == callScope) {                // Scope specified as FQN part
+                            if (routine instanceof PascalRoutine) {
                                 PascalRoutineActions.ActionImplement act = new PascalRoutineActions.ActionImplement(message("action.implement"), (PascalNamedElement) routine);
                                 act.invoke(editor.getProject(), editor, routine.getContainingFile());
                             }
                         } else {                                                                            // Called within method
-                            if (routine instanceof PascalRoutineImpl) {
+                            if (routine instanceof PascalRoutine) {
                                 PascalRoutineActions.ActionDeclare act = new PascalRoutineActions.ActionDeclare(message("action.declare.routine"), (PascalNamedElement) routine);
                                 act.invoke(editor.getProject(), editor, routine.getContainingFile());
                             }

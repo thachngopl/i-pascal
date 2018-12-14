@@ -17,7 +17,6 @@ import com.siberika.idea.pascal.lang.psi.PasDereferenceExpr;
 import com.siberika.idea.pascal.lang.psi.PasEntityScope;
 import com.siberika.idea.pascal.lang.psi.PasExpr;
 import com.siberika.idea.pascal.lang.psi.PasExpression;
-import com.siberika.idea.pascal.lang.psi.PasFormalParameterSection;
 import com.siberika.idea.pascal.lang.psi.PasFullyQualifiedIdent;
 import com.siberika.idea.pascal.lang.psi.PasGenericTypeIdent;
 import com.siberika.idea.pascal.lang.psi.PasIndexExpr;
@@ -33,9 +32,12 @@ import com.siberika.idea.pascal.lang.psi.PasTypes;
 import com.siberika.idea.pascal.lang.psi.PasUnaryExpr;
 import com.siberika.idea.pascal.lang.psi.PasUnaryOp;
 import com.siberika.idea.pascal.lang.psi.PascalNamedElement;
+import com.siberika.idea.pascal.lang.psi.PascalOperation;
 import com.siberika.idea.pascal.lang.psi.PascalPsiElement;
+import com.siberika.idea.pascal.lang.psi.PascalRoutine;
 import com.siberika.idea.pascal.lang.psi.PascalStructType;
 import com.siberika.idea.pascal.lang.references.PasReferenceUtil;
+import com.siberika.idea.pascal.lang.references.ResolveContext;
 import com.siberika.idea.pascal.util.PsiUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -103,10 +105,11 @@ public class PascalExpression extends ASTWrapperPsiElement implements PascalPsiE
     }
 
     private static PasField.ValueType resolveType(PasEntityScope scope, PasFullyQualifiedIdent fullyQualifiedIdent) {
-        final Collection<PasField> references = PasReferenceUtil.resolve(null, scope, NamespaceRec.fromElement(fullyQualifiedIdent), PasField.TYPES_ALL, true, 0);
+        ResolveContext context = new ResolveContext(scope, PasField.TYPES_ALL, true, null, null);
+        final Collection<PasField> references = PasReferenceUtil.resolve(NamespaceRec.fromElement(fullyQualifiedIdent), context, 0);
         if (!references.isEmpty()) {
             PasField field = references.iterator().next();
-            PasReferenceUtil.retrieveFieldTypeScope(field);
+            PasReferenceUtil.retrieveFieldTypeScope(field, new ResolveContext(field.owner, PasField.TYPES_TYPE, true, null, context.unitNamespaces));
             return field.getValueType();
         }
         return null;
@@ -173,7 +176,7 @@ public class PascalExpression extends ASTWrapperPsiElement implements PascalPsiE
             return infereUnaryExprType((PasUnaryExpr) expression);
         } else if (expression instanceof PasSumExpr) {
             PasSumExpr sumExpr = (PasSumExpr) expression;
-            return combineType("-".equals(sumExpr.getAddOp().getText()) ? Operation.SUBSTRACT : Operation.SUM, sumExpr.getExprList());
+            return combineType("-".equals(sumExpr.getAddOp().getText()) ? Operation.SUBTRACT : Operation.SUM, sumExpr.getExprList());
         } else if (expression instanceof PasRelationalExpr) {
             return Primitive.BOOLEAN.name;
         } else if (expression instanceof PasProductExpr) {
@@ -255,17 +258,23 @@ public class PascalExpression extends ASTWrapperPsiElement implements PascalPsiE
         if (null == ref) {
             return null;
         }
-        Collection<PasField> routines = PasReferenceUtil.resolveExpr(null, NamespaceRec.fromElement(ref), PasField.TYPES_ROUTINE, true, 0);
+        Collection<PasField> routines = PasReferenceUtil.resolveExpr(NamespaceRec.fromElement(ref), new ResolveContext(PasField.TYPES_ROUTINE, true), 0);
 
-        PascalRoutineImpl suitable = null;
+        PascalRoutine suitable = null;
         for (PasField routine : routines) {
             PascalNamedElement el = routine.getElement();
-            if (el instanceof PascalRoutineImpl) {
-                suitable = (PascalRoutineImpl) el;
-                PasFormalParameterSection params = suitable.getFormalParameterSection();
-                // TODO: make type check and handle overload
-                if (params != null && params.getFormalParameterList().size() == expression.getArgumentList().getExprList().size()) {
-                    return suitable.getFunctionTypeStr();
+            if (el instanceof PascalRoutine) {
+                suitable = (PascalRoutine) el;
+                if (RoutineUtil.isSuitable(expression, suitable)) {
+                    if (suitable.isConstructor()) {
+                        // TODO: handle metaclass constructor calls
+                        if (expression.getExpr() instanceof PasReferenceExpr) {
+                            String typeName = expression.getExpr().getText();
+                            return typeName.substring(0, typeName.length() - suitable.getName().length() - 1);
+                        }
+                    } else {
+                        return suitable.getFunctionTypeStr();
+                    }
                 }
             }
         }
@@ -409,7 +418,7 @@ public class PascalExpression extends ASTWrapperPsiElement implements PascalPsiE
     }
 
     public enum Operation {
-        SUM, SUBSTRACT, PRODUCT, DIVISION
+        SUM, SUBTRACT, PRODUCT, DIVISION
     }
 
     public enum Primitive {

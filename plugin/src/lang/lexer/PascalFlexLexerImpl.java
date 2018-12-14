@@ -8,12 +8,9 @@ import com.intellij.openapi.actionSystem.PlatformDataKeys;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
-import com.intellij.openapi.module.Module;
-import com.intellij.openapi.module.ModuleUtil;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectLocator;
 import com.intellij.openapi.projectRoots.Sdk;
-import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.roots.ProjectRootManager;
 import com.intellij.openapi.util.AsyncResult;
 import com.intellij.openapi.util.Pair;
@@ -23,6 +20,7 @@ import com.intellij.psi.tree.IElementType;
 import com.intellij.util.SmartList;
 import com.intellij.util.containers.HashMap;
 import com.intellij.util.io.BaseInputStreamReader;
+import com.siberika.idea.pascal.lang.psi.PasTypes;
 import com.siberika.idea.pascal.sdk.BasePascalSdkType;
 import com.siberika.idea.pascal.sdk.Define;
 import com.siberika.idea.pascal.util.StrUtil;
@@ -37,7 +35,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Author: George Bakhtadze
@@ -53,8 +50,10 @@ public class PascalFlexLexerImpl extends _PascalLexer {
     private int curLevel = 0;
     // level on which inactive code branch started
     private int inactiveLevel = 0;
+    // IF with True condition flag
+    private int conditionStack = 0;
 
-    // (Offset, curLevel, inactiveLevel) - offset, current conditional compilation level, level on which inactive code branch started
+    // (Offset(32), ifValueStack(16), curLevel(8), inactiveLevel(8)) - offset, stack of IF condition values, current conditional compilation level, level on which inactive code branch started
     private List<Long> levels = new SmartList<Long>();
     // (Offset, defineName). Negative offset - undefine.
     private List<Pair<Integer, String>> defines = new SmartList<Pair<Integer, String>>();
@@ -99,9 +98,12 @@ public class PascalFlexLexerImpl extends _PascalLexer {
         if (levels.isEmpty()) {
             curLevel = 0;
             inactiveLevel = 0;
+            conditionStack = 0;
         } else {
-            curLevel = (levels.get(levels.size()-1).intValue() >> 16) & 0xFF;
-            inactiveLevel = levels.get(levels.size()-1).intValue() & 0xFF;
+            int value = levels.get(levels.size() - 1).intValue();
+            conditionStack = (value >> 16) & 0xFFFF;
+            curLevel = (value >> 8) & 0xFF;
+            inactiveLevel = value & 0xFF;
         }
         actualDefines = null;
         allDefines = null;
@@ -206,12 +208,6 @@ public class PascalFlexLexerImpl extends _PascalLexer {
         return (project != null) && !project.isDisposed() && (ProjectRootManager.getInstance(project) != null);
     }
 
-    private static Sdk getSdk(Project project, VirtualFile virtualFile) {
-        Module module = virtualFile != null ? ModuleUtil.findModuleForFile(virtualFile, project) : null;
-        Sdk sdk = module != null ? ModuleRootManager.getInstance(module).getSdk() : null;
-        return sdk != null ? sdk : ProjectRootManager.getInstance(project).getProjectSdk();
-    }
-
     @Override
     public void define(int pos, CharSequence sequence) {
         String name = extractDefineName(sequence);
@@ -219,7 +215,10 @@ public class PascalFlexLexerImpl extends _PascalLexer {
             String key = name.toUpperCase();
             getActualDefines().add(key);
             defines.add(Pair.create(pos, key));
-            getAllDefines().put(key, new Define(name, virtualFile, pos));
+            Map<String, Define> defs = allDefines;
+            if (!BasePascalSdkType.DEFINE_IDE_PARSER.equals(key) || !defs.containsKey(key)) {
+                defs.put(key, new Define(name, virtualFile, pos));
+            }
             //if (incremental)System.out.println("Define: " + name);
         }
     }
@@ -231,7 +230,7 @@ public class PascalFlexLexerImpl extends _PascalLexer {
             String key = name.toUpperCase();
             getActualDefines().remove(key);
             defines.add(Pair.create(-pos, key));
-            getAllDefines().put(key, new Define(name, virtualFile, pos));
+            allDefines.put(key, new Define(name, virtualFile, pos));
             //if (incremental)System.out.println("Undefine: " + name);
         }
     }
@@ -240,8 +239,10 @@ public class PascalFlexLexerImpl extends _PascalLexer {
         actualDefines = new HashSet<String>();
         allDefines = new HashMap<String, Define>();
         if ((project != null)) {
-            final Sdk sdk = getSdk(project, virtualFile);
-            allDefines = (sdk != null) && (sdk.getVersionString() != null) ? BasePascalSdkType.getDefaultDefines(sdk, sdk.getVersionString()) : allDefines;
+            final Sdk sdk = com.siberika.idea.pascal.util.ModuleUtil.getSdk(project, virtualFile);
+            if ((sdk != null) && (sdk.getVersionString() != null)) {
+                allDefines.putAll(BasePascalSdkType.getDefaultDefines(sdk, sdk.getVersionString()));
+            }
             for (Map.Entry<String, Define> entry : allDefines.entrySet()) {
                 actualDefines.add(entry.getKey());
             }
@@ -249,24 +250,80 @@ public class PascalFlexLexerImpl extends _PascalLexer {
     }
 
     private IElementType doHandleIfDef(int pos, CharSequence sequence, boolean negate) {
+        if (isConditionalsDisabled()) {
+            return PasTypes.COMMENT;
+        }
         String name = extractDefineName(sequence);
         curLevel++;
-        if (StringUtils.isNotEmpty(name) && (!getActualDefines().contains(name.toUpperCase()) ^ negate) && (!isInactive())) {
-            inactiveLevel = curLevel;
-            yybegin(INACTIVE_BRANCH);
-            //if (incremental)System.out.println(String.format("%s is NOT %sdefined", name, negate ? "un" : ""));
+        if (!isInactive()) {
+            if (StringUtils.isNotEmpty(name) && (!getActualDefines().contains(name.toUpperCase()) ^ negate)) {
+                inactiveLevel = curLevel;
+                pushCondition(false);
+                yybegin(INACTIVE_BRANCH);
+            } else {
+                pushCondition(true);
+            }
+        } else {
+            pushCondition(false);    // to balance with $endif directives
         }
         pushLevels(pos);
         return CT_DEFINE;
     }
 
-    private void pushLevels(int pos) {
-        levels.add((long) (pos) << 32 + curLevel << 16 + inactiveLevel);
+    private IElementType doHandleIf(int pos, CharSequence sequence) {
+        if (isConditionalsDisabled()) {
+            return PasTypes.COMMENT;
+        }
+        curLevel++;
+        String condition = extractCondition(sequence);
+        if (!isInactive()) {
+            if (StringUtils.isNotEmpty(condition) && (!ConditionParser.checkCondition(condition, getActualDefines()))) {
+                inactiveLevel = curLevel;
+                pushCondition(false);
+                yybegin(INACTIVE_BRANCH);
+            } else {
+                pushCondition(true);
+            }
+        } else {
+            pushCondition(false);    // to balance with $endif directives
+        }
+        pushLevels(pos);
+        return CT_DEFINE;
     }
 
     @Override
     public IElementType handleIf(int pos, CharSequence sequence) {
-        return doHandleIfDef(pos, sequence, false);
+        return doHandleIf(pos, sequence);
+    }
+
+    @Override
+    public IElementType handleElseIf(int pos, CharSequence sequence) {
+        if (isConditionalsDisabled()) {
+            return PasTypes.COMMENT;
+        }
+        if (0 == curLevel) {
+            VirtualFile virtualFile = getVirtualFile();
+            getVFName(virtualFile);
+            LOG.info(String.format("ERROR: $ELSEIF w/o $IF. Text: %s, file: %s", sequence, getVFName(virtualFile)));
+            return doHandleIf(pos, sequence);
+        }
+        if (isLastConditionTrue()) {
+            if (!isInactive()) {
+                inactiveLevel = curLevel;
+                yybegin(INACTIVE_BRANCH);
+                pushLevels(pos);
+            }
+        } else {
+            String condition = extractCondition(sequence);
+            if (isInactive() && StringUtils.isNotEmpty(condition) && ConditionParser.checkCondition(condition, getActualDefines())) {
+                if (curLevel == inactiveLevel) {
+                    yybegin(YYINITIAL);
+                    pushCondition(true);
+                    pushLevels(pos);
+                }
+            }
+        }
+        return CT_DEFINE;
     }
 
     @Override
@@ -286,9 +343,14 @@ public class PascalFlexLexerImpl extends _PascalLexer {
 
     @Override
     public IElementType handleElse(int pos) {
-        if (curLevel <= 0) { return TokenType.BAD_CHARACTER; }
+        if (isConditionalsDisabled()) {
+            return PasTypes.COMMENT;
+        }
+        if (curLevel <= 0) {
+            return TokenType.BAD_CHARACTER;
+        }
         if (isInactive()) {
-            if (curLevel == inactiveLevel) {
+            if (!isLastConditionTrue() && (curLevel == inactiveLevel)) {
                 yybegin(YYINITIAL);
             }
         } else {
@@ -301,10 +363,16 @@ public class PascalFlexLexerImpl extends _PascalLexer {
 
     @Override
     public IElementType handleEndIf(int pos) {
-        if (curLevel <= 0) { return TokenType.BAD_CHARACTER; }
+        if (isConditionalsDisabled()) {
+            return PasTypes.COMMENT;
+        }
+        if (curLevel <= 0) {
+            return TokenType.BAD_CHARACTER;
+        }
         if (curLevel == inactiveLevel) {
             yybegin(YYINITIAL);
         }
+        popCondition();
         curLevel--;
         pushLevels(pos);
         return CT_DEFINE;
@@ -320,7 +388,7 @@ public class PascalFlexLexerImpl extends _PascalLexer {
             PascalFlexLexerImpl lexer = !ObjectUtils.equals(virtualFile, file) ? processFile(project, file) : null;
             if (lexer != null) {
                 getActualDefines().addAll(lexer.getActualDefines());
-                getAllDefines().putAll(lexer.getAllDefines());
+                allDefines.putAll(lexer.getAllDefines());
                 for (Pair<Integer, String> define : lexer.defines) {
                     defines.add(Pair.create(define.first > 0 ? pos : -pos, define.second));
                 }
@@ -330,6 +398,26 @@ public class PascalFlexLexerImpl extends _PascalLexer {
             }
         }
         return INCLUDE;
+    }
+
+    private void pushCondition(boolean result) {
+        conditionStack = (conditionStack << 1) | (result ? 1 : 0);
+    }
+
+    private void popCondition() {
+        conditionStack = (conditionStack >> 1);
+    }
+
+    private boolean isLastConditionTrue() {
+        return (conditionStack & 1) == 1;
+    }
+
+    private boolean isConditionalsDisabled() {
+        return getActualDefines().contains(BasePascalSdkType.DEFINE_IDE_DISABLE_CONDITIONALS_);
+    }
+
+    private void pushLevels(int pos) {
+        levels.add((long) (pos) << 32 + (conditionStack & 0xFF) << 16 + (curLevel << 8) + inactiveLevel);
     }
 
     // Process the file and return the new instance of lexer which processed it
@@ -378,10 +466,15 @@ public class PascalFlexLexerImpl extends _PascalLexer {
         return yystate() == INACTIVE_BRANCH;
     }
 
-    private static final Pattern PATTERN_DEFINE = Pattern.compile("\\{\\$\\w+\\s+(\\w+)\\s*}");
+
     private static String extractDefineName(CharSequence sequence) {
         Matcher m = PATTERN_DEFINE.matcher(sequence);
         return m.matches() ? m.group(1) : null;
+    }
+
+    private static String extractCondition(CharSequence sequence) {
+        Matcher m = PATTERN_CONDITION.matcher(sequence);
+        return m.matches() ? m.group(2) : null;
     }
 
     private static String extractIncludeName(CharSequence sequence) {

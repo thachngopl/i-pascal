@@ -8,18 +8,21 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.SmartPointerManager;
 import com.intellij.psi.SmartPsiElementPointer;
 import com.intellij.psi.util.PsiTreeUtil;
+import com.intellij.util.SmartList;
 import com.siberika.idea.pascal.ide.actions.SectionToggle;
-import com.siberika.idea.pascal.lang.parser.NamespaceRec;
+import com.siberika.idea.pascal.lang.psi.HasTypeParameters;
 import com.siberika.idea.pascal.lang.psi.PasClassQualifiedIdent;
+import com.siberika.idea.pascal.lang.psi.PasDeclSection;
 import com.siberika.idea.pascal.lang.psi.PasEntityScope;
-import com.siberika.idea.pascal.lang.psi.PasExportedRoutine;
 import com.siberika.idea.pascal.lang.psi.PasFormalParameterSection;
-import com.siberika.idea.pascal.lang.psi.PasNamedIdent;
+import com.siberika.idea.pascal.lang.psi.PasGenericPostfix;
 import com.siberika.idea.pascal.lang.psi.PasRoutineImplDecl;
 import com.siberika.idea.pascal.lang.psi.PasTypeDecl;
 import com.siberika.idea.pascal.lang.psi.PasTypeID;
+import com.siberika.idea.pascal.lang.psi.PasWithStatement;
 import com.siberika.idea.pascal.lang.psi.PascalNamedElement;
-import com.siberika.idea.pascal.lang.references.PasReferenceUtil;
+import com.siberika.idea.pascal.lang.psi.PascalRoutine;
+import com.siberika.idea.pascal.lang.psi.field.ParamModifier;
 import com.siberika.idea.pascal.util.PsiUtil;
 import com.siberika.idea.pascal.util.SyncUtil;
 import org.jetbrains.annotations.NotNull;
@@ -35,34 +38,65 @@ import java.util.concurrent.locks.ReentrantLock;
  * Author: George Bakhtadze
  * Date: 06/09/2013
  */
-public abstract class PascalRoutineImpl extends PasScopeImpl implements PasEntityScope, PasDeclSection {
+public abstract class PascalRoutineImpl extends PasScopeImpl implements PascalRoutine, PasDeclSection, HasTypeParameters {
 
     private static final Cache<String, Members> cache = CacheBuilder.newBuilder().softValues().build();
 
     private ReentrantLock parentLock = new ReentrantLock();
-    private boolean parentBuilding = false;
+    private List<SmartPsiElementPointer<PasEntityScope>> parentScopes;
+    private List<String> formalParameterNames;
+    private List<String> formalParameterTypes;
+    private List<ParamModifier> formalParameterAccess;
+    private String canonicalName;
+    private ReentrantLock parametersLock = new ReentrantLock();
+    private List<String> typeParameters;
+    private ReentrantLock typeParametersLock = new ReentrantLock();
 
     private final Callable<? extends Members> MEMBER_BUILDER = this.new MemberBuilder();
+    volatile private Collection<PasWithStatement> withStatements;
 
     @Nullable
     public abstract PasFormalParameterSection getFormalParameterSection();
 
-    public PascalRoutineImpl(ASTNode node) {
+    PascalRoutineImpl(ASTNode node) {
         super(node);
+    }
+
+    @NotNull
+    @Override
+    public PasField.FieldType getType() {
+        return PasField.FieldType.ROUTINE;
+    }
+
+    @NotNull
+    @Override
+    public List<String> getTypeParameters() {
+        if (SyncUtil.lockOrCancel(typeParametersLock)) {
+            try {
+                if (null == typeParameters) {
+                    PsiElement nameIdent = getNameIdentifier();
+                    List<PasGenericPostfix> postfixes = nameIdent instanceof PasClassQualifiedIdent ? ((PasClassQualifiedIdent) nameIdent).getGenericPostfixList() : Collections.emptyList();
+                    typeParameters = postfixes.isEmpty() ? Collections.emptyList() : RoutineUtil.parseTypeParametersStr(postfixes.get(0).getText());
+                }
+            } finally {
+                typeParametersLock.unlock();
+            }
+        }
+        return typeParameters;
     }
 
     @Override
     protected String calcKey() {
         StringBuilder sb = new StringBuilder(PsiUtil.getFieldName(this));
-        sb.append(PsiUtil.isForwardProc(this) ? "-fwd" : "");
-        if (this instanceof PasExportedRoutine) {
-            sb.append("^intf");
-        } else {
-            sb.append("^impl");
+        if (PsiUtil.isForwardProc(this)) {
+            sb.append("(fwd)");
         }
+        sb.append("(impl)");
 
         PasEntityScope scope = this.getContainingScope();
-        sb.append(scope != null ? "." + scope.getKey() : "");
+        if (scope != null) {
+            sb.append(".").append(scope.getKey());
+        }
 
 //        System.out.println(String.format("%s:%d - %s", PsiUtil.getFieldName(this), this.getTextOffset(), sb.toString()));
         return sb.toString();
@@ -88,6 +122,27 @@ public abstract class PascalRoutineImpl extends PasScopeImpl implements PasEntit
         }
     }
 
+    @Override
+    protected String calcUniqueName() {
+        PasEntityScope scope = getContainingScope();
+        return (scope != null ? scope.getUniqueName() + "." : "") + getCanonicalName();
+    }
+
+    @Override
+    public String getCanonicalName() {
+        SyncUtil.doWithLock(parametersLock, () -> {
+            if (null == canonicalName) {
+                canonicalName = RoutineUtil.calcCanonicalName(getName(), getFormalParameterTypes(), getFormalParameterAccess(), getFunctionTypeStr());
+            }
+        });
+        return canonicalName;
+    }
+
+    @Override
+    public PasField.Visibility getVisibility() {
+        return PasField.Visibility.PUBLIC;         // TODO: implement
+    }
+
     @Nullable
     @Override
     public PasField getField(String name) {
@@ -100,14 +155,37 @@ public abstract class PascalRoutineImpl extends PasScopeImpl implements PasEntit
         return getMembers(cache, MEMBER_BUILDER).all.values();
     }
 
-    public static void invalidate(String key) {
+    @Override
+    public void subtreeChanged() {
+        super.subtreeChanged();
+        invalidateCaches();
+    }
+
+    @Override
+    public void invalidateCaches() {
+        if (SyncUtil.lockOrCancel(parentLock)) {
+            parentScopes = null;
+            parentLock.unlock();
+        }
+        if (SyncUtil.lockOrCancel(parametersLock)) {
+            formalParameterNames = null;
+            formalParameterTypes = null;
+            formalParameterAccess = null;
+            canonicalName = null;
+            parametersLock.unlock();
+        }
+        if (cachedKey != null) {
+            invalidate(cachedKey);
+        }
+    }
+
+    static void invalidate(String key) {
         cache.invalidate(key);
-        parentCache.invalidate(key);
     }
 
     private class MemberBuilder implements Callable<Members> {
         @Override
-        public Members call() throws Exception {
+        public Members call() {
             if (null == getContainingFile()) {
                 PascalPsiImplUtil.logNullContainingFile(PascalRoutineImpl.this);
                 return null;
@@ -137,28 +215,106 @@ public abstract class PascalRoutineImpl extends PasScopeImpl implements PasEntit
     }
 
     private void collectFormalParameters(Members res) {
-        PascalRoutineImpl routine = this;
-        List<PasNamedIdent> params = PsiUtil.getFormalParameters(getFormalParameterSection());
+        PascalRoutine routine = this;
+        List<PascalNamedElement> params = PsiUtil.getFormalParameters(getFormalParameterSection());
         if (params.isEmpty() && (this instanceof PasRoutineImplDecl)) {         // If this is implementation with formal parameters omitted take formal parameters from routine declaration
             PsiElement decl = SectionToggle.retrieveDeclaration(this, true);
-            if (decl instanceof PascalRoutineImpl) {
-                routine = (PascalRoutineImpl) decl;
+            if (decl instanceof PascalRoutine) {
+                routine = (PascalRoutine) decl;
                 params = PsiUtil.getFormalParameters(routine.getFormalParameterSection());
             }
         }
-        for (PasNamedIdent parameter : params) {
+        for (PascalNamedElement parameter : params) {
             addField(res, parameter, PasField.FieldType.VARIABLE);
         }
-        if (!res.all.containsKey(BUILTIN_RESULT.toUpperCase())) {
+        if (routine.isFunction() && !res.all.containsKey(BUILTIN_RESULT.toUpperCase())) {
             res.all.put(BUILTIN_RESULT.toUpperCase(), new PasField(this, routine, BUILTIN_RESULT, PasField.FieldType.PSEUDO_VARIABLE, PasField.Visibility.STRICT_PRIVATE));
         }
+    }
+
+    @NotNull
+    @Override
+    public List<String> getFormalParameterNames() {
+        calcFormalParameters();
+        return formalParameterNames;
+    }
+
+    @NotNull
+    @Override
+    public List<String> getFormalParameterTypes() {
+        calcFormalParameters();
+        return formalParameterTypes;
+    }
+
+    @NotNull
+    @Override
+    public List<ParamModifier> getFormalParameterAccess() {
+        calcFormalParameters();
+        return formalParameterAccess;
+    }
+
+    private void calcFormalParameters() {
+        SyncUtil.doWithLock(parametersLock, () -> {
+            if (null == formalParameterNames) {
+                formalParameterNames = new SmartList<>();
+                formalParameterAccess = new SmartList<>();
+                formalParameterTypes = new SmartList<>();
+                RoutineUtil.calcFormalParameterNames(getFormalParameterSection(), formalParameterNames, formalParameterTypes, formalParameterAccess);
+            }
+        });
+    }
+
+    public boolean isConstructor() {
+        return RoutineUtil.isConstructor(this);
+    }
+
+    public boolean isFunction() {
+        return findChildByFilter(RoutineUtil.FUNCTION_KEYWORDS) != null;
+    }
+
+    @Override
+    public boolean hasParameters() {
+        return PsiUtil.hasParameters(this);
+    }
+
+    @NotNull
+    public String getFunctionTypeStr() {
+        if (isConstructor()) {                                 // Return namespace part of constructor implementation name as type name
+            String ns = getNamespace();
+            ns = ns.substring(ns.lastIndexOf('.') + 1);
+            List<String> typeParams = getTypeParameters();
+            if (!typeParams.isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                sb.append("<");
+                for (String typeParam : typeParams) {
+                    if (sb.length() > 1) {
+                        sb.append(", ");
+                    }
+                    sb.append(typeParam);
+                }
+                sb.append(">");
+                ns = ns + sb.toString();
+            } 
+            return ns;
+        }
+        PasTypeDecl type = findChildByClass(PasTypeDecl.class);
+        PasTypeID typeId = PsiTreeUtil.findChildOfType(type, PasTypeID.class);
+        if (typeId != null) {
+            return typeId.getFullyQualifiedIdent().getName();
+        }
+        return type != null ? type.getText() : "";
+    }
+
+    @Nullable
+    public PasTypeID getFunctionTypeIdent() {
+        return PsiTreeUtil.findChildOfType(findChildByClass(PasTypeDecl.class), PasTypeID.class);
     }
 
     private void addSelf(Members res) {
         PasEntityScope scope = getContainingScope();
         if ((scope != null) && (scope.getParent() instanceof PasTypeDecl)) {
             PasField field = new PasField(this, scope, BUILTIN_SELF, PasField.FieldType.PSEUDO_VARIABLE, PasField.Visibility.STRICT_PRIVATE);
-            PasTypeDecl typeDecl =  (PasTypeDecl) scope.getParent();
+            PasTypeDecl typeDecl = (PasTypeDecl) scope.getParent();
             field.setValueType(new PasField.ValueType(field, PasField.Kind.STRUCT, null, typeDecl));
             res.all.put(BUILTIN_SELF.toUpperCase(), field);
         }
@@ -169,73 +325,37 @@ public abstract class PascalRoutineImpl extends PasScopeImpl implements PasEntit
         res.all.put(field.name.toUpperCase(), field);
     }
 
-    @Nullable
-    public PasTypeID getFunctionTypeIdent() {
-        PasTypeDecl type = findChildByClass(PasTypeDecl.class);
-        return PsiTreeUtil.findChildOfType(type, PasTypeID.class);
-    }
-
     @NotNull
-    public String getFunctionTypeStr() {
-        PasTypeDecl type = findChildByClass(PasTypeDecl.class);
-        PasTypeID typeId = PsiTreeUtil.findChildOfType(type, PasTypeID.class);
-        if (typeId != null) {
-            return typeId.getFullyQualifiedIdent().getName();
-        }
-        return type != null ? type.getText() : "";
+    @Override
+    public List<SmartPsiElementPointer<PasEntityScope>> getParentScope() {
+            if (SyncUtil.tryLockQuiet(parentLock, SyncUtil.LOCK_TIMEOUT_MS)) {
+                try {
+                    if (null == parentScopes) {
+                        calcParentScopes();
+                    }
+                } finally {
+                    parentLock.unlock();
+                }
+            } else {
+                LOG.info("ERROR: can't lock for calculate parent scope for: " + getName());
+            }
+        return parentScopes;
     }
 
     @NotNull
     @Override
-    public List<SmartPsiElementPointer<PasEntityScope>> getParentScope() {
-        if (!SyncUtil.tryLockQuiet(parentLock, SyncUtil.LOCK_TIMEOUT_MS)) {
-            return Collections.emptyList();
+    public Collection<PasWithStatement> getWithStatements() {
+        if (null == withStatements) {
+            withStatements = PsiTreeUtil.findChildrenOfType(this, PasWithStatement.class);
         }
-        try {
-            if (parentBuilding) {
-                return Collections.emptyList();
-            }
-            parentBuilding = true;
-            ensureChache(parentCache);
-            return parentCache.get(getKey(), new ParentBuilder()).scopes;
-        } catch (Exception e) {
-            if (e.getCause() instanceof ProcessCanceledException) {
-                throw (ProcessCanceledException) e.getCause();
-            } else {
-                LOG.warn("Error occured during building parents for: " + this, e.getCause());
-                invalidateCaches(getKey());
-                return Collections.emptyList();
-            }
-        } finally {
-            parentBuilding = false;
-            parentLock.unlock();
-        }
+        return withStatements;
     }
 
-    private class ParentBuilder implements Callable<Parents> {
-        @Override
-        public Parents call() throws Exception {
-            if (null == getContainingFile()) {
-                PascalPsiImplUtil.logNullContainingFile(PascalRoutineImpl.this);
-                return null;
-            }
-
-            Parents res = new Parents();
-            res.stamp = getStamp(getContainingFile());
-
-            PasClassQualifiedIdent ident = PsiTreeUtil.getChildOfType(PascalRoutineImpl.this, PasClassQualifiedIdent.class);
-            if ((ident != null) && (ident.getSubIdentList().size() > 1)) {          // Should contain at least class name and method name parts
-                NamespaceRec fqn = NamespaceRec.fromElement(ident.getSubIdentList().get(ident.getSubIdentList().size() - 2));
-                res.scopes = Collections.emptyList();                             // To prevent infinite recursion
-                PasEntityScope type = PasReferenceUtil.resolveTypeScope(fqn, true);
-                if (type != null) {
-                    res.scopes = Collections.singletonList(SmartPointerManager.getInstance(type.getProject()).createSmartPsiElementPointer(type));
-                }
-            } else {
-                res.scopes = Collections.emptyList();
-            }
-
-            return res;
+    private void calcParentScopes() {
+        parentScopes = Collections.emptyList();                             // To prevent infinite recursion
+        PasEntityScope scope = getContainingScope();
+        if (scope != null) {
+            parentScopes = Collections.singletonList(SmartPointerManager.getInstance(getProject()).createSmartPsiElementPointer(scope));
         }
     }
 

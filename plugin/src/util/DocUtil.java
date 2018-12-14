@@ -19,6 +19,7 @@ import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiManager;
+import com.intellij.psi.PsiWhiteSpace;
 import com.intellij.psi.codeStyle.CodeStyleManager;
 import com.intellij.util.FileContentUtil;
 import com.intellij.util.SmartList;
@@ -40,6 +41,7 @@ import java.util.regex.Pattern;
 public class DocUtil {
     public static final Pattern RE_LF = Pattern.compile("\n");
     public static final Pattern RE_WHITESPACE = Pattern.compile("\\s");
+    public static final Pattern RE_SEMICOLON = Pattern.compile(";");
     private static final Map<String, String> DUP_MAP = getDupMap();
     public static final String PLACEHOLDER_CARET = "__CARET__";
     private static final int SPACES = 3;
@@ -96,7 +98,7 @@ public class DocUtil {
                 el = PsiUtil.skipToExpressionParent(el);
                 PsiManager manager = el != null ? el.getManager() : null;
                 if ((el != null) && (manager != null)) {
-                    CodeStyleManager.getInstance(manager).reformat(el, true);
+                    CodeStyleManager.getInstance(manager).reformatRange(file, el.getTextRange().getStartOffset(), el.getTextRange().getEndOffset(), true);
                 }
             }
         });
@@ -116,8 +118,9 @@ public class DocUtil {
             @Override
             public void run() {
                 PsiManager manager = element.getManager();
-                if (manager != null) {
-                    CodeStyleManager.getInstance(manager).reformat(element, true);
+                PsiElement parent = element.getParent();
+                if ((manager != null) && (parent != null)) {
+                    CodeStyleManager.getInstance(manager).reformatNewlyAddedElement(parent.getNode(), element.getNode());
                 }
             }
         };
@@ -237,6 +240,17 @@ public class DocUtil {
     }
 
     public static boolean isSingleLine(@NotNull Document document, @NotNull PsiElement element) {
-        return document.getLineNumber(element.getTextRange().getStartOffset()) == document.getLineNumber(element.getTextRange().getEndOffset());
+        return isSingleLine(document, element.getTextRange());
+    }
+
+    public static boolean isSingleLine(@NotNull Document document, @NotNull TextRange range) {
+        return document.getLineNumber(range.getStartOffset()) == document.getLineNumber(range.getEndOffset());
+    }
+
+    public static boolean isLineEmpty(Document document, PsiFile file, int line) {
+        int start = document.getLineStartOffset(line);
+        int end = document.getLineEndOffset(line);
+        PsiElement startEl = file.findElementAt(start);
+        return (startEl instanceof PsiWhiteSpace) && (startEl == file.findElementAt(end));
     }
 }

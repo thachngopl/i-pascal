@@ -38,7 +38,8 @@ import java.util.regex.Pattern;
 public class DelphiSdkType extends BasePascalSdkType {
 
     private static final Logger LOG = Logger.getInstance(DelphiSdkType.class.getName());
-    private static final String[] LIBRARY_DIRS = {"debug"};
+    private static final String[] LIBRARY_DIRS_DCU = {"debug"};
+    private static final String[] LIBRARY_DIRS_SOURCE = {"common", "posix", "sys", "win"};
     private static final Pattern DELPHI_VERSION_PATTERN = Pattern.compile("[\\w\\s]+[vV]ersion\\s(\\d+\\.\\d+)");
     private static final String DELPHI_STARTER_VERSION_PATTERN = DelphiBackendCompiler.DELPHI_STARTER_RESPONSE;
     private static final Pattern RTLPKG_PATTERN = Pattern.compile("RTL(\\d{3,4}).BPL");
@@ -65,7 +66,7 @@ public class DelphiSdkType extends BasePascalSdkType {
     @Nullable
     @Override
     public String suggestHomePath() {
-        List<String> dirs = Arrays.asList("", "program files");
+        List<String> dirs = Arrays.asList("", "program files", "embarcadero", "program files/embarcadero");
         for (File drive : File.listRoots()) {
             if (drive.isDirectory()) {
                 for (String dir : dirs) {
@@ -78,7 +79,7 @@ public class DelphiSdkType extends BasePascalSdkType {
     }
 
     private String checkDir(@NotNull File file) {
-        List<String> ides = Arrays.asList("delphi", "rad studio");
+        List<String> ides = Arrays.asList("delphi", "studio", "rad studio");
         for (String ide : ides) {
             File f = new File(file, ide);
             LOG.info("=== checking directory " + f.getAbsolutePath());
@@ -216,8 +217,8 @@ public class DelphiSdkType extends BasePascalSdkType {
         LOG.info("Setting up SDK paths for SDK at " + sdk.getHomePath());
         final SdkModificator[] sdkModificatorHolder = new SdkModificator[]{null};
         final SdkModificator sdkModificator = sdk.getSdkModificator();
-        for (String dir : LIBRARY_DIRS) {
-            VirtualFile vdir = getLibrary(sdk, dir);
+        for (String dir : LIBRARY_DIRS_SOURCE) {
+            VirtualFile vdir = getSource(sdk, dir);
             if (vdir != null) {
                 sdkModificator.addRoot(vdir, OrderRootType.CLASSES);
             }
@@ -232,6 +233,11 @@ public class DelphiSdkType extends BasePascalSdkType {
         if (!rtlDir.exists()) {
             rtlDir = new File(sdk.getHomePath() + File.separatorChar + "lib" + File.separatorChar + name);
         }
+        return LocalFileSystem.getInstance().findFileByIoFile(rtlDir);
+    }
+
+    private static VirtualFile getSource(Sdk sdk, String name) {
+        File rtlDir = new File(sdk.getHomePath() + File.separatorChar + "source" + File.separatorChar + "rtl" + File.separatorChar + name);
         return LocalFileSystem.getInstance().findFileByIoFile(rtlDir);
     }
 

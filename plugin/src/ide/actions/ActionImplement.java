@@ -12,16 +12,15 @@ import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.util.SmartList;
 import com.siberika.idea.pascal.PascalBundle;
 import com.siberika.idea.pascal.PascalLanguage;
 import com.siberika.idea.pascal.editor.PascalRoutineActions;
 import com.siberika.idea.pascal.lang.psi.PasEntityScope;
 import com.siberika.idea.pascal.lang.psi.PasExportedRoutine;
 import com.siberika.idea.pascal.lang.psi.PascalNamedElement;
+import com.siberika.idea.pascal.lang.psi.PascalRoutine;
 import com.siberika.idea.pascal.lang.psi.PascalStructType;
 import com.siberika.idea.pascal.lang.psi.impl.PasField;
-import com.siberika.idea.pascal.lang.psi.impl.PascalRoutineImpl;
 import com.siberika.idea.pascal.ui.TreeViewStruct;
 import com.siberika.idea.pascal.util.DocUtil;
 import com.siberika.idea.pascal.util.EditorUtil;
@@ -31,6 +30,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -45,18 +45,23 @@ public class ActionImplement extends PascalAction {
     @Override
     public void doActionPerformed(AnActionEvent e) {
         PsiElement el = getElement(e);
-        PascalRoutineImpl methodImpl = null;
+        Editor editor = getEditor(e);
+        showOverrideDialog(el, editor);
+    }
+
+    public void showOverrideDialog(PsiElement el, Editor editor) {
+        PascalRoutine methodImpl = null;
         PasEntityScope scope = PsiTreeUtil.getParentOfType(el, PasEntityScope.class);
-        if (scope instanceof PascalRoutineImpl) {
-            methodImpl = (PascalRoutineImpl) scope;
+        if (scope instanceof PascalRoutine) {
+            methodImpl = (PascalRoutine) scope;
             scope = scope.getContainingScope();
         }
         if (!(scope instanceof PascalStructType)) {
-            EditorUtil.showErrorHint(PascalBundle.message("action.error.notinstruct"), EditorUtil.getHintPos(getEditor(e)));
+            EditorUtil.showErrorHint(PascalBundle.message("action.error.notinstruct"), EditorUtil.getHintPos(editor));
             return;
         }
-        Collection<PasEntityScope> structs = new SmartList<PasEntityScope>();
-        GotoSuper.getParentStructs(structs, scope);
+        Collection<PasEntityScope> structs = new LinkedHashSet<>();
+        GotoSuper.retrieveParentStructs(structs, scope, 0);
         final Set<String> existing = new HashSet<String>();
         for (PasField field : scope.getAllFields()) {
             allowNonExistingRoutines(field, existing);
@@ -70,7 +75,7 @@ public class ActionImplement extends PascalAction {
         });
         tree.show();
 
-        doOverride(getEditor(e), scope, el, methodImpl, tree.getSelected());
+        doOverride(editor, scope, el, methodImpl, tree.getSelected());
     }
 
     private boolean allowNonExistingRoutines(PasField value, Set<String> existing) {
@@ -85,7 +90,7 @@ public class ActionImplement extends PascalAction {
     }
 
     // if methodImpl = null assuming interface part
-    private void doOverride(final Editor editor, final PasEntityScope scope, final PsiElement el, PascalRoutineImpl methodImpl, final List<PasField> selected) {
+    private void doOverride(final Editor editor, final PasEntityScope scope, final PsiElement el, PascalRoutine methodImpl, final List<PasField> selected) {
         PsiElement prevMethod = getPrevMethod(el, methodImpl);
         final AtomicInteger offs = new AtomicInteger();
         if (prevMethod != null) {
@@ -134,7 +139,7 @@ public class ActionImplement extends PascalAction {
         return text.replace("virtual", "override").replaceAll("abstract\\s*;", "");
     }
 
-    private PsiElement getPrevMethod(PsiElement el, PascalRoutineImpl methodImpl) {
+    private PsiElement getPrevMethod(PsiElement el, PascalRoutine methodImpl) {
         if (methodImpl != null) {
             return SectionToggle.retrieveDeclaration(methodImpl, false);
         }
@@ -149,4 +154,5 @@ public class ActionImplement extends PascalAction {
     public void update(AnActionEvent e) {
         e.getPresentation().setEnabledAndVisible(PascalLanguage.INSTANCE.equals(e.getData(LangDataKeys.LANGUAGE)));
     }
+
 }

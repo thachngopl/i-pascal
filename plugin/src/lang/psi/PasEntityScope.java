@@ -2,6 +2,7 @@ package com.siberika.idea.pascal.lang.psi;
 
 import com.intellij.psi.NavigatablePsiElement;
 import com.intellij.psi.SmartPsiElementPointer;
+import com.siberika.idea.pascal.lang.psi.impl.HasUniqueName;
 import com.siberika.idea.pascal.lang.psi.impl.PasField;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -13,7 +14,7 @@ import java.util.List;
  * Author: George Bakhtadze
  * Date: 15/09/2013
  */
-public interface PasEntityScope extends PascalNamedElement, NavigatablePsiElement {
+public interface PasEntityScope extends PascalNamedElement, NavigatablePsiElement, HasUniqueName {
     String BUILTIN_RESULT = "Result";
     String BUILTIN_SELF = "Self";
 
@@ -24,7 +25,7 @@ public interface PasEntityScope extends PascalNamedElement, NavigatablePsiElemen
     @NotNull
     Collection<PasField> getAllFields();
 
-    // owning class for methods, parent classes/interfaces for structured types
+    // owning class for methods, parent classes/interfaces for structured types //TODO: use Set
     @NotNull
     List<SmartPsiElementPointer<PasEntityScope>> getParentScope();
 
@@ -40,5 +41,11 @@ public interface PasEntityScope extends PascalNamedElement, NavigatablePsiElemen
     PasEntityScope getContainingScope();
 
     String getKey();
+
+    // Should invalidate all cached instances
+    void invalidateCaches();
+
+    @NotNull
+    Collection<PasWithStatement> getWithStatements();
 
 }

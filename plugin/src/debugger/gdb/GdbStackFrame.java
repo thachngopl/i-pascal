@@ -2,6 +2,7 @@ package com.siberika.idea.pascal.debugger.gdb;
 
 import com.intellij.icons.AllIcons;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -13,11 +14,13 @@ import com.intellij.xdebugger.XSourcePosition;
 import com.intellij.xdebugger.evaluation.XDebuggerEvaluator;
 import com.intellij.xdebugger.frame.XCompositeNode;
 import com.intellij.xdebugger.frame.XStackFrame;
+import com.siberika.idea.pascal.debugger.PascalXDebugProcess;
 import com.siberika.idea.pascal.debugger.gdb.parser.GdbMiResults;
 import com.siberika.idea.pascal.jps.util.FileUtil;
 import com.siberika.idea.pascal.lang.parser.NamespaceRec;
 import com.siberika.idea.pascal.lang.psi.impl.PasField;
 import com.siberika.idea.pascal.lang.references.PasReferenceUtil;
+import com.siberika.idea.pascal.lang.references.ResolveContext;
 import com.siberika.idea.pascal.util.StrUtil;
 import org.apache.commons.lang.StringUtils;
 import org.jetbrains.annotations.NotNull;
@@ -34,7 +37,7 @@ import java.util.concurrent.ConcurrentMap;
  * Date: 01/04/2017
  */
 public class GdbStackFrame extends XStackFrame {
-    private final GdbXDebugProcess process;
+    private final PascalXDebugProcess process;
     private final GdbExecutionStack executionStack;
     private final GdbMiResults frame;
     private final int level;
@@ -102,26 +105,30 @@ public class GdbStackFrame extends XStackFrame {
         return name + "()";
     }
 
-    PasField resolveIdentifierName(final String name, final Set<PasField.FieldType> types) {
+    public PasField resolveIdentifierName(final String name, final Set<PasField.FieldType> types) {
         if (!process.options.resolveNames() || (null == sourcePosition)) {
             return null;
         }
-        return ApplicationManager.getApplication().runReadAction(new Computable<PasField>() {
-            @Override
-            public PasField compute() {
-                PsiElement el = XDebuggerUtil.getInstance().findContextElement(sourcePosition.getFile(), sourcePosition.getOffset(), process.getSession().getProject(), false);
-                if (el != null) {
-                    Collection<PasField> fields = getFields(el, name);
-                    String id = name.substring(name.lastIndexOf('.') + 1);
-                    for (PasField field : fields) {
-                        if (types.contains(field.fieldType) && id.equalsIgnoreCase(field.name)) {
-                            return field;
+        if (DumbService.isDumb(process.getSession().getProject())) {
+            return null;
+        } else {
+            return ApplicationManager.getApplication().runReadAction(new Computable<PasField>() {
+                @Override
+                public PasField compute() {
+                    PsiElement el = XDebuggerUtil.getInstance().findContextElement(sourcePosition.getFile(), sourcePosition.getOffset(), process.getSession().getProject(), false);
+                    if (el != null) {
+                        Collection<PasField> fields = getFields(el, name);
+                        String id = name.substring(name.lastIndexOf('.') + 1);
+                        for (PasField field : fields) {
+                            if (types.contains(field.fieldType) && id.equalsIgnoreCase(field.name)) {
+                                return field;
+                            }
                         }
                     }
+                    return null;
                 }
-                return null;
-            }
-        });
+            });
+        }
     }
 
     private Collection<PasField> getFields(@NotNull PsiElement el, String name) {
@@ -142,7 +149,7 @@ public class GdbStackFrame extends XStackFrame {
         }
         namespace.clearTarget();
         namespace.setIgnoreVisibility(true);
-        fields = PasReferenceUtil.resolveExpr(null, namespace, PasField.TYPES_LOCAL, true, 0);
+        fields = PasReferenceUtil.resolveExpr(namespace, new ResolveContext(PasField.TYPES_LOCAL, true), 0);
         fieldsMap.put(name, fields);
         return fields;
     }

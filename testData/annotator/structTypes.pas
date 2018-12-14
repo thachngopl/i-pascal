@@ -48,21 +48,10 @@ type
 
     CA = class of TA;
 
-    TAHelper = class helper for TA
-        Name: string;
-        class function Func: TA;
-        constructor Create(a, b: TA);
-    end;
-
     PVec = ^TVec;
     TVec = packed record
         x, Y: Single;
         z: TA;
-    end;
-
-    TVecHelper = record helper for TVec
-        class function v: TVec;
-        constructor Create();
     end;
 
     TVarRec = packed record
@@ -96,6 +85,11 @@ type
             )
     end;
 
+    TOuter = record
+    case Byte of
+        1: (inner: record f1: Byte; end);
+    end;
+
     TArray = array[0..100] of TA;
     TArrayP = bitpacked array of PVec;
     PArrayP = ^TArrayP;
@@ -114,6 +108,7 @@ implementation
 var
     vec: TVarRec2;
     a: tvarrec;
+    o: TOuter;
 
 class function TObserverMapping.Instance: TObserverMapping;
 begin
@@ -121,8 +116,9 @@ begin
 end;
 
 constructor TObserverMapping.Create;
+var structTypes: TVec;
 begin
-
+    structTypes.x;
 end;
 
 class destructor TObserverMapping.Destroy;
@@ -131,26 +127,6 @@ begin
 end;
 
 class function TObserverMapping.GetObserverID(const Key: Single): Integer;
-begin
-
-end;
-
-class function TAHelper.Func: TA;
-begin
-
-end;
-
-constructor TAHelper.Create(a, b: TA);
-begin
-
-end;
-
-class function TVecHelper.v: TVec;
-begin
-
-end;
-
-constructor TVecHelper.Create();
 begin
 
 end;
@@ -171,4 +147,6 @@ begin
     with vec do
         Y := 1;
     vr2.tag := 1;
+    o.inner;
+    o.inner.f1;
 end.

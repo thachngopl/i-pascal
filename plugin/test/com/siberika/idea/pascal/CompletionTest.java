@@ -4,12 +4,22 @@ import com.intellij.codeInsight.completion.CompletionType;
 import com.intellij.codeInsight.lookup.LookupElement;
 import com.intellij.openapi.editor.Caret;
 import com.intellij.openapi.editor.CaretModel;
+import com.intellij.psi.PsiElement;
 import com.intellij.testFramework.fixtures.CodeInsightTestFixture;
 import com.intellij.testFramework.fixtures.LightPlatformCodeInsightFixtureTestCase;
+import com.intellij.xdebugger.XDebuggerUtil;
+import com.siberika.idea.pascal.lang.parser.NamespaceRec;
+import com.siberika.idea.pascal.lang.psi.PasEntityScope;
+import com.siberika.idea.pascal.lang.psi.impl.PasField;
+import com.siberika.idea.pascal.lang.references.PasReferenceUtil;
+import com.siberika.idea.pascal.lang.references.ResolveContext;
+import com.siberika.idea.pascal.util.PsiUtil;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.TreeSet;
 
@@ -57,6 +67,18 @@ public class CompletionTest extends LightPlatformCodeInsightFixtureTestCase {
         }
     }
 
+    private void checkCompletionMatchCarets(CodeInsightTestFixture myFixture, String...expected) {
+        List<List<String>> strings = completeBasicAllCarets(myFixture);
+        assertEquals(expected.length, strings.size());
+        for (int i = 0; i < strings.size(); i++) {
+            String exp = expected[strings.size() - i - 1];
+            List<String> actual = strings.get(i);
+            assertTrue(String.format("\nCaret #%d expected match %s, actual: %s",
+                    strings.size() - i, exp, actual.isEmpty() ? "<empty>" : actual.get(0)),
+                    (actual.size() == 1) && exp.equalsIgnoreCase(actual.get(0)));
+        }
+    }
+
     private static void checkContains(List<String> strings, String[] expected, String prefix) {
         List<String> exp = Arrays.asList(expected);
         ArrayList<String> lacking = new ArrayList<String>(exp);
@@ -64,7 +86,7 @@ public class CompletionTest extends LightPlatformCodeInsightFixtureTestCase {
         assertTrue(String.format(prefix + "%s\nLack of: %s", exp, lacking), strings.containsAll(exp));
     }
 
-    private void checkCompletionNotContains(CodeInsightTestFixture myFixture, String...unexpected) {
+    public static void checkCompletionNotContains(CodeInsightTestFixture myFixture, String...unexpected) {
         completeBasicAllCarets(myFixture);
         List<String> strings = myFixture.getLookupElementStrings();
         assertTrue(strings != null);
@@ -78,7 +100,7 @@ public class CompletionTest extends LightPlatformCodeInsightFixtureTestCase {
         assertTrue(sb.toString(), sb.length() == 0);
     }
 
-    public final List<List<String>> completeBasicAllCarets(CodeInsightTestFixture myFixture) {
+    public static final List<List<String>> completeBasicAllCarets(CodeInsightTestFixture myFixture) {
         final CaretModel caretModel = myFixture.getEditor().getCaretModel();
         final List<Caret> carets = caretModel.getAllCarets();
 
@@ -124,8 +146,7 @@ public class CompletionTest extends LightPlatformCodeInsightFixtureTestCase {
     public void testUnitDeclSection() {
         myFixture.configureByFiles("unitDeclSection.pas");
         checkCompletion(myFixture, "const", "type", "var", "threadvar", "resourcestring",
-                "procedure", "function", "constructor", "destructor",
-                "uses", "begin");
+                "procedure", "function", "uses");
         myFixture.type('v');
         checkCompletion(myFixture, "var", "threadvar");
     }
@@ -134,7 +155,7 @@ public class CompletionTest extends LightPlatformCodeInsightFixtureTestCase {
         myFixture.configureByFiles("unitDeclSectionImpl.pas");
         checkCompletion(myFixture, "const", "type", "var", "threadvar", "resourcestring",
                 "procedure", "function", "constructor", "destructor",
-                "uses", "begin", "initialization", "finalization");
+                "uses", "begin  ", "initialization", "finalization");
         myFixture.type('v');
         checkCompletion(myFixture, "var", "threadvar");
     }
@@ -142,8 +163,7 @@ public class CompletionTest extends LightPlatformCodeInsightFixtureTestCase {
     public void testModuleSection() {
         myFixture.configureByFiles("moduleSection.pas");
         checkCompletion(myFixture, "const", "type", "var", "threadvar", "resourcestring",
-                "procedure", "function", "constructor", "destructor",
-                "uses", "begin  ");
+                "procedure", "function", "constructor", "destructor", "uses", "begin  ");
         myFixture.type('d');
         checkCompletion(myFixture, "destructor", "procedure", "threadvar");
     }
@@ -187,7 +207,7 @@ public class CompletionTest extends LightPlatformCodeInsightFixtureTestCase {
 
     public void testMethodDirectivesIntf() {
         myFixture.configureByFiles("methodDirectivesIntf.pas");
-        checkCompletion(myFixture, "assembler", "cdecl", "deprecated", "dispid", "experimental",
+        checkCompletion(myFixture, "assembler", "cdecl", "deprecated", "experimental",
                 "export", "final", "inline", "library", "message", "overload", "pascal", "platform",
                 "register", "safecall", "static", "stdcall",
                 "abstract", "dynamic", "override", "reintroduce", "virtual");
@@ -198,15 +218,20 @@ public class CompletionTest extends LightPlatformCodeInsightFixtureTestCase {
     public void testStructIntf() {
         myFixture.configureByFiles("structIntf.pas");
         checkCompletion(myFixture, "const", "type", "var", "procedure", "function", "constructor", "destructor",
-                "strict", "private", "protected", "public", "published", "automated",
+                "strict private", "strict protected", "private", "protected", "public", "published", "automated",
                 "class ", "operator", "property", "end");
         myFixture.type('v');
-        checkCompletion(myFixture, "var", "private");
+        checkCompletion(myFixture, "var", "private", "strict private");
     }
 
     public void testMethodDeclImplHead() {
         myFixture.configureByFiles("methodImplHead.pas");
         checkCompletion(myFixture, "begin");
+    }
+
+    public void testMethodDeclImplHeadNewLine() {
+        myFixture.configureByFiles("methodImplHeadNewLine.pas");
+        checkCompletion(myFixture, "begin", "const", "function", "procedure", "type", "var");
     }
 
     public void testMethodDeclImpl() {
@@ -218,19 +243,19 @@ public class CompletionTest extends LightPlatformCodeInsightFixtureTestCase {
 
     public void testStructured() {
         myFixture.configureByFiles("structured.pas");
-        checkCompletion(myFixture, "strict", "private", "protected", "public", "published", "automated",
+        checkCompletion(myFixture, "strict private", "strict protected", "private", "protected", "public", "published", "automated",
                 "const", "type", "var", "procedure", "function", "constructor", "destructor",
                 "class ", "operator", "property", "end");
         myFixture.type('a');
-        checkCompletion(myFixture, "automated", "private", "class ", "operator", "var");
+        checkCompletion(myFixture, "automated", "private", "strict private", "class ", "operator", "var");
     }
 
-    public void testTypeId() {
+    public void testTypeIdInVarDecl() {
         myFixture.configureByFiles("typeId.pas");
         checkCompletionContains(myFixture, "TTest", "TRec2", "typeId",
-                "type", "class", "dispinterface", "interface ", "record", "object", "packed", "set", "file", "helper", "array");
-        myFixture.type("te");
-        checkCompletionContains(myFixture, "TTest", "dispinterface", "interface ");
+                "record", "packed", "set", "file", "array");
+        myFixture.type("re");
+        checkCompletionContains(myFixture, "TRec2", "record");
     }
 
     public void testParent() {
@@ -249,16 +274,13 @@ public class CompletionTest extends LightPlatformCodeInsightFixtureTestCase {
 
     public void testConsts() {
         myFixture.configureByFiles("consts.pas");
-        checkCompletionContainsAllCarets(myFixture, "a", "b", "CONST_1", "CONST_2");
-        //checkCompletionContains(myFixture, "a", "b", "CONST_1", "CONST_2");
+        checkCompletionNotContains(myFixture, "a", "b");
+        checkCompletionContains(myFixture, "CONST_1", "CONST_2");
     }
 
     public void testStatementInStmt() {
         myFixture.configureByFiles("statementInStmt.pas");
-        /*checkCompletionNotContains(myFixture,
-                "for", "while", "repeat", "if", "case", "with",
-                "goto", "exit", "try", "raise", "begin", "end");*/
-        checkCompletionContainsAllCarets(myFixture, "do", "then", "of");
+        checkCompletionMatchCarets(myFixture, "do", "then", "do", "of", "do");
     }
 
     public void testStatementInExpr() {
@@ -286,6 +308,28 @@ public class CompletionTest extends LightPlatformCodeInsightFixtureTestCase {
     public void testProp() {
         myFixture.configureByFiles("prop.pas");
         checkCompletionContains(myFixture, "X", "Y");
+    }
+
+    public void testContext() {
+        myFixture.configureByFiles("empty.pas", "contextTest.pas");
+        PsiElement el = XDebuggerUtil.getInstance().findContextElement(myFixture.findFileInTempDir("contextTest.pas"), 42, myFixture.getProject(), false);
+        PasEntityScope scope = PsiUtil.getNearestAffectingScope(el);
+        NamespaceRec fqn = NamespaceRec.fromFQN(myFixture.getFile(), "");
+        fqn.setIgnoreVisibility(true);
+        ResolveContext context = new ResolveContext(scope, EnumSet.of(PasField.FieldType.VARIABLE), false, null, null);
+        Collection<PasField> fields = PasReferenceUtil.resolve(fqn, context, 0);
+        assertTrue(fields.iterator().hasNext());
+        assertEquals("local", fields.iterator().next().name);
+    }
+
+    public void testForwardStructure() {
+        myFixture.configureByFiles("forwardStructure.pas");
+        checkCompletionContains(myFixture, "Bar");
+    }
+
+    public void testInherited() {
+        myFixture.configureByFiles("inherited1.pas", "inherited2.pas");
+        checkCompletion(myFixture, "ParentConstructor", "parentMethod", "Parent2Constructor", "parent2Method");
     }
 
 }

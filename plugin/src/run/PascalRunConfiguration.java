@@ -17,9 +17,7 @@ package com.siberika.idea.pascal.run;
 
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.Executor;
-import com.intellij.execution.configurations.CommandLineState;
 import com.intellij.execution.configurations.ConfigurationFactory;
-import com.intellij.execution.configurations.GeneralCommandLine;
 import com.intellij.execution.configurations.ModuleBasedConfiguration;
 import com.intellij.execution.configurations.RunConfiguration;
 import com.intellij.execution.configurations.RunConfigurationModule;
@@ -27,9 +25,6 @@ import com.intellij.execution.configurations.RunConfigurationWithSuppressedDefau
 import com.intellij.execution.configurations.RunProfileState;
 import com.intellij.execution.configurations.SearchScopeProvider;
 import com.intellij.execution.executors.DefaultDebugExecutor;
-import com.intellij.execution.filters.TextConsoleBuilderFactory;
-import com.intellij.execution.process.CapturingProcessHandler;
-import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.execution.runners.RunConfigurationWithSuppressedDefaultRunAction;
 import com.intellij.openapi.module.Module;
@@ -37,20 +32,15 @@ import com.intellij.openapi.options.SettingsEditor;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.roots.ProjectRootManager;
-import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.util.InvalidDataException;
+import com.intellij.openapi.util.WriteExternalException;
 import com.intellij.psi.search.GlobalSearchScope;
-import com.siberika.idea.pascal.PascalBundle;
-import com.siberika.idea.pascal.jps.sdk.PascalSdkData;
-import com.siberika.idea.pascal.jps.util.FileUtil;
 import com.siberika.idea.pascal.module.PascalModuleType;
-import com.siberika.idea.pascal.sdk.BasePascalSdkType;
+import org.jdom.Element;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
-import java.util.List;
 
 /**
  * Author: George Bakhtadze
@@ -59,9 +49,13 @@ import java.util.List;
 public class PascalRunConfiguration extends ModuleBasedConfiguration<RunConfigurationModule>
         implements PascalRunConfigurationParams, RunConfigurationWithSuppressedDefaultRunAction, RunConfigurationWithSuppressedDefaultDebugAction {
 
+    private static final String ATTR_PROGRAM_FILE_NAME = "program_file_name";
+
     private String parameters;
     private String workingDirectory;
     private String programFileName;
+    private boolean fixIOBuffering = true;
+    private boolean debugMode = false;
 
     public PascalRunConfiguration(String name, RunConfigurationModule configurationModule, ConfigurationFactory factory) {
         super(name, configurationModule, factory);
@@ -84,7 +78,7 @@ public class PascalRunConfiguration extends ModuleBasedConfiguration<RunConfigur
         return new PascalRunConfigurationEditor(this);
     }
 
-    private Module findModule(@NotNull ExecutionEnvironment env) {
+    Module findModule(@NotNull ExecutionEnvironment env) {
         Module result = null;
         if ((env.getRunnerAndConfigurationSettings() != null) &&
             (env.getRunnerAndConfigurationSettings().getConfiguration() instanceof PascalRunConfiguration)) {
@@ -103,68 +97,13 @@ public class PascalRunConfiguration extends ModuleBasedConfiguration<RunConfigur
 
     @Nullable
     public RunProfileState getState(@NotNull Executor executor, @NotNull final ExecutionEnvironment env) throws ExecutionException {
-        final boolean debug = executor instanceof DefaultDebugExecutor;
-        final String workDirectory = this.workingDirectory;
-        final List<String> params = new ArrayList<String>();
-        if ((parameters != null) && (parameters.length() > 0)) {
-            params.addAll(Arrays.asList(parameters.split("\\s+"))); //TODO: use exec*utils to correctly split params
-        }
-        return new CommandLineState(env) {
-            @NotNull
-            @Override
-            protected ProcessHandler startProcess() throws ExecutionException {
-                Module module = findModule(env);
-                GeneralCommandLine commandLine = new GeneralCommandLine();
-
-                String fileName;
-                if (programFileName != null) {
-                    fileName = FileUtil.getFilename(programFileName);
-                } else {
-                    VirtualFile mainFile = PascalModuleType.getMainFile(module);
-                    fileName = mainFile != null ? mainFile.getNameWithoutExtension() : null;
-                }
-                String executable = PascalRunner.getExecutable(module, fileName);
-                if (debug) {
-                    Sdk sdk = getConfigurationModule().getModule() != null ?
-                            ModuleRootManager.getInstance(getConfigurationModule().getModule()).getSdk() :
-                            ProjectRootManager.getInstance(getProject()).getProjectSdk();
-
-                    PascalSdkData data = sdk != null ? BasePascalSdkType.getAdditionalData(sdk) : PascalSdkData.EMPTY;
-                    String command = BasePascalSdkType.getDebuggerCommand(sdk, "gdb");
-                    commandLine.setExePath(command);
-                    if (!data.getBoolean(PascalSdkData.Keys.DEBUGGER_USE_GDBINIT)) {
-                        commandLine.addParameters("-n");
-                        commandLine.addParameters("-fullname");
-                        commandLine.addParameters("-nowindows");
-                        commandLine.addParameters("-interpreter=mi");
-                    }
-
-                    if (data.getValue(PascalSdkData.Keys.DEBUGGER_OPTIONS.getKey()) != null) {
-                        String[] compilerOptions = data.getString(PascalSdkData.Keys.DEBUGGER_OPTIONS).split("\\s+");
-                        commandLine.addParameters(compilerOptions);
-                    }
-
-                    commandLine.addParameters("--args");
-                    commandLine.addParameters(executable);
-                } else {
-                    if (executable != null) {
-                        commandLine.setExePath(executable);
-                    } else {
-                        throw new ExecutionException(PascalBundle.message("execution.noExecutable"));
-                    }
-                }
-                commandLine.addParameters(params);
-                commandLine.setWorkDirectory(workDirectory);
-                ProcessHandler handler = new CapturingProcessHandler(commandLine.createProcess(), commandLine.getCharset(), commandLine.getCommandLineString());
-                setConsoleBuilder(TextConsoleBuilderFactory.getInstance().createBuilder(getProject()));
-                return handler;
-            }
-        };
+        return new PascalCommandLineState(this, env, executor instanceof DefaultDebugExecutor, workingDirectory, parameters, fixIOBuffering);
     }
 
     public static void copyParams(PascalRunConfigurationParams from, PascalRunConfigurationParams to) {
         to.setParameters(from.getParameters());
         to.setWorkingDirectory(from.getWorkingDirectory());
+        to.setFixIOBuffering(from.getFixIOBuffering());
     }
 
     @Override
@@ -178,6 +117,16 @@ public class PascalRunConfiguration extends ModuleBasedConfiguration<RunConfigur
     }
 
     @Override
+    public boolean getFixIOBuffering() {
+        return fixIOBuffering;
+    }
+
+    @Override
+    public boolean getDebugMode() {
+        return debugMode;
+    }
+
+    @Override
     public void setParameters(String parameters) {
         this.parameters = parameters;
     }
@@ -185,6 +134,16 @@ public class PascalRunConfiguration extends ModuleBasedConfiguration<RunConfigur
     @Override
     public void setWorkingDirectory(String workingDirectory) {
         this.workingDirectory = workingDirectory;
+    }
+
+    @Override
+    public void setFixIOBuffering(boolean value) {
+        fixIOBuffering = value;
+    }
+
+    @Override
+    public void setDebugMode(boolean value) {
+        debugMode = value;
     }
 
     public String getProgramFileName() {
@@ -198,5 +157,28 @@ public class PascalRunConfiguration extends ModuleBasedConfiguration<RunConfigur
     // 2016.3 compatibility
     public GlobalSearchScope getSearchScope() {
         return SearchScopeProvider.createSearchScope(getModules());
+    }
+
+    public Sdk getSdk() {
+        return getConfigurationModule().getModule() != null ?
+                ModuleRootManager.getInstance(getConfigurationModule().getModule()).getSdk() :
+                ProjectRootManager.getInstance(getProject()).getProjectSdk();
+    }
+
+    public void readExternal(@NotNull Element element) throws InvalidDataException {
+        super.readExternal(element);
+        setProgramFileName(element.getAttributeValue(ATTR_PROGRAM_FILE_NAME));
+    }
+
+    public void writeExternal(@NotNull Element element) throws WriteExternalException {
+        super.writeExternal(element);
+        if (programFileName != null) {
+            element.setAttribute(ATTR_PROGRAM_FILE_NAME, programFileName);
+        }
+    }
+
+    @Override
+    public String toString() {
+        return (debugMode ? "[debug]" : "[]") + super.toString();
     }
 }

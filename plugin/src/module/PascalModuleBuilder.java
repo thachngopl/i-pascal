@@ -2,19 +2,21 @@ package com.siberika.idea.pascal.module;
 
 import com.intellij.ide.util.projectWizard.ModuleBuilder;
 import com.intellij.ide.util.projectWizard.ModuleWizardStep;
+import com.intellij.ide.util.projectWizard.SdkSettingsStep;
 import com.intellij.ide.util.projectWizard.SettingsStep;
 import com.intellij.openapi.module.ModuleType;
-import com.intellij.openapi.module.StdModuleTypes;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.projectRoots.SdkTypeId;
 import com.intellij.openapi.roots.CompilerModuleExtension;
 import com.intellij.openapi.roots.ContentEntry;
 import com.intellij.openapi.roots.ModifiableRootModel;
+import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.siberika.idea.pascal.sdk.BasePascalSdkType;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -88,7 +90,13 @@ public class PascalModuleBuilder extends ModuleBuilder {
 
     @Nullable
     @Override
-    public ModuleWizardStep modifySettingsStep(SettingsStep settingsStep) {
-        return StdModuleTypes.JAVA.modifySettingsStep(settingsStep, this);
+    public ModuleWizardStep modifySettingsStep(@NotNull SettingsStep settingsStep) {
+        return new SdkSettingsStep(settingsStep, this, new Condition<SdkTypeId>() {
+            @Override
+            public boolean value(SdkTypeId sdkType) {
+                return PascalModuleBuilder.this.isSuitableSdkType(sdkType);
+            }
+        });
     }
+
 }

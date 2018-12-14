@@ -4,13 +4,12 @@ import com.intellij.codeInsight.intention.IntentionAction;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.testFramework.fixtures.LightPlatformCodeInsightFixtureTestCase;
 import com.siberika.idea.pascal.ide.actions.PascalDefinitionsSearch;
-import com.siberika.idea.pascal.lang.parser.PascalParserUtil;
 import com.siberika.idea.pascal.lang.psi.PasEntityScope;
 import com.siberika.idea.pascal.lang.psi.PasFullyQualifiedIdent;
 import com.siberika.idea.pascal.lang.psi.PascalNamedElement;
+import com.siberika.idea.pascal.lang.psi.PascalRoutine;
 import com.siberika.idea.pascal.lang.psi.impl.PasField;
 import com.siberika.idea.pascal.lang.psi.impl.PascalModuleImpl;
-import com.siberika.idea.pascal.lang.psi.impl.PascalRoutineImpl;
 import com.siberika.idea.pascal.lang.references.PasReferenceUtil;
 import com.siberika.idea.pascal.util.PsiUtil;
 import com.siberika.idea.pascal.util.TestUtil;
@@ -46,7 +45,7 @@ public class GotoSymbolTest extends LightPlatformCodeInsightFixtureTestCase {
 
     public void testFindSymbol() {
         myFixture.configureByFiles("gotoSymbolTest.pas");
-        Collection<PascalNamedElement> symbols = PascalParserUtil.findSymbols(myFixture.getProject(), "");
+        Collection<PascalNamedElement> symbols = TestUtil.findSymbols(myFixture.getProject(), "");
         Set<String> names = new HashSet<String>(symbols.size());
         for (PascalNamedElement symbol : symbols) {
             names.add(symbol.getName());
@@ -69,12 +68,12 @@ public class GotoSymbolTest extends LightPlatformCodeInsightFixtureTestCase {
         names.put("testB", "testB(type1)");
         names.put("testC", "testC()");
         myFixture.configureByFiles("normalizeRoutineName.pas");
-        Collection<PascalRoutineImpl> symbols = PascalParserUtil.findSymbols(myFixture.getProject(), "test", PascalRoutineImpl.class);
+        Collection<PascalRoutine> symbols = TestUtil.findSymbols(myFixture.getProject(), "test", PascalRoutine.class);
         assertEquals("Wrong number of routines", names.size(), symbols.size());
         for (PascalNamedElement symbol : symbols) {
-            if (symbol instanceof PascalRoutineImpl) {
-                System.out.println(String.format("%s = %s", symbol.getName(), PsiUtil.normalizeRoutineName((PascalRoutineImpl) symbol)));
-                assertEquals(names.get(symbol.getName()), PsiUtil.normalizeRoutineName((PascalRoutineImpl) symbol));
+            if (symbol instanceof PascalRoutine) {
+                System.out.println(String.format("%s = %s", symbol.getName(), PsiUtil.normalizeRoutineName((PascalRoutine) symbol)));
+                assertEquals(names.get(symbol.getName()), PsiUtil.normalizeRoutineName((PascalRoutine) symbol));
             }
         }
 

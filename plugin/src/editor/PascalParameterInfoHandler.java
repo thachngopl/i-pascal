@@ -9,22 +9,14 @@ import com.intellij.lang.parameterInfo.ParameterInfoUtils;
 import com.intellij.lang.parameterInfo.UpdateParameterInfoContext;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.util.SmartList;
-import com.siberika.idea.pascal.lang.parser.NamespaceRec;
 import com.siberika.idea.pascal.lang.psi.PasCallExpr;
-import com.siberika.idea.pascal.lang.psi.PasFormalParameter;
-import com.siberika.idea.pascal.lang.psi.PasFormalParameterSection;
-import com.siberika.idea.pascal.lang.psi.PasFullyQualifiedIdent;
-import com.siberika.idea.pascal.lang.psi.PasNamedIdent;
 import com.siberika.idea.pascal.lang.psi.PasTypes;
-import com.siberika.idea.pascal.lang.psi.impl.PasField;
-import com.siberika.idea.pascal.lang.psi.impl.PascalRoutineImpl;
+import com.siberika.idea.pascal.lang.psi.PascalRoutineEntity;
+import com.siberika.idea.pascal.lang.psi.field.ParamModifier;
 import com.siberika.idea.pascal.lang.references.PasReferenceUtil;
-import com.siberika.idea.pascal.util.PsiUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -33,7 +25,7 @@ import java.util.TreeMap;
  * Author: George Bakhtadze
  * Date: 25/03/2015
  */
-public class PascalParameterInfoHandler implements ParameterInfoHandler<PasCallExpr, PasFormalParameterSection> {
+public class PascalParameterInfoHandler implements ParameterInfoHandler<PasCallExpr, PascalRoutineEntity> {
     @Override
     public boolean couldShowInLookup() {
         return true;
@@ -47,7 +39,7 @@ public class PascalParameterInfoHandler implements ParameterInfoHandler<PasCallE
 
     @Nullable
     @Override
-    public Object[] getParametersForDocumentation(PasFormalParameterSection p, ParameterInfoContext context) {
+    public Object[] getParametersForDocumentation(PascalRoutineEntity p, ParameterInfoContext context) {
         return null;
     }
 
@@ -71,22 +63,9 @@ public class PascalParameterInfoHandler implements ParameterInfoHandler<PasCallE
     }
 
     private Object[] getParameters(PasCallExpr callExpr) {
-        PasFullyQualifiedIdent ident = callExpr != null ? PsiTreeUtil.findChildOfType(callExpr.getExpr(), PasFullyQualifiedIdent.class) : null;
-        if (null == ident) {
-            return null;
-        }
-        Collection<PasField> routines = PasReferenceUtil.resolveExpr(null, NamespaceRec.fromElement(ident), PasField.TYPES_ROUTINE, true, 0);
-        if (routines.isEmpty()) {
-            return null;
-        }
-        Map<String, PasFormalParameterSection> res = new TreeMap<String, PasFormalParameterSection>();
-        for (PasField field : routines) {
-            if (field.getElement() instanceof PascalRoutineImpl) {
-                PasFormalParameterSection parameters = ((PascalRoutineImpl) field.getElement()).getFormalParameterSection();
-                if (parameters != null) {
-                    res.put(PsiUtil.getFieldName(field.getElement()), parameters);
-                }
-            }
+        Map<String, PascalRoutineEntity> res = new TreeMap<String, PascalRoutineEntity>();
+        for (PascalRoutineEntity routineEntity : PasReferenceUtil.resolveRoutines(callExpr)) {
+            res.put(routineEntity.getName(), routineEntity);
         }
         return res.values().toArray();
     }
@@ -123,39 +102,34 @@ public class PascalParameterInfoHandler implements ParameterInfoHandler<PasCallE
     }
 
     @Override
-    public void updateUI(PasFormalParameterSection p, @NotNull ParameterInfoUIContext context) {
-        List<PsiElement> idents = getIdentList(p);
-        PsiElement hlParam = null;
-        boolean isDisabled = false;
-        if (context.getCurrentParameterIndex() < idents.size()) {
-            hlParam = (context.getCurrentParameterIndex() >= 0) ? idents.get(context.getCurrentParameterIndex()) : null;
-        } else {
-            isDisabled = true;
-        }
+    public void updateUI(PascalRoutineEntity p, @NotNull ParameterInfoUIContext context) {
+        StringBuilder sb = new StringBuilder();
         int hlStart = -1;
         int hlEnd = -1;
-        if (hlParam != null) {
-            hlStart = hlParam.getTextRange().getStartOffset() - p.getTextOffset() - 1;
-            hlEnd = hlParam.getTextRange().getEndOffset() - p.getTextOffset() - 1;
+        List<String> names = p.getFormalParameterNames();
+        for (int i = 0; i < names.size(); i++) {
+            String name = names.get(i);
+            String type = p.getFormalParameterTypes().get(i);
+            ParamModifier access = p.getFormalParameterAccess().get(i);
+
+            if (sb.length() > 0) {
+                sb.append("; ");
+            }
+
+            if (i == context.getCurrentParameterIndex()) {
+                hlStart = sb.length();
+            }
+            if (access != ParamModifier.NONE) {
+                sb.append(access.name().toLowerCase()).append(" ");
+            }
+            sb.append(name).append(": ").append(type);
+            if (i == context.getCurrentParameterIndex()) {
+                hlEnd = sb.length();
+            }
         }
-        context.setupUIComponentPresentation(getHintText(p), hlStart, hlEnd,
-                isDisabled, false, false, context.getDefaultParameterColor()
+        boolean isDisabled = context.getCurrentParameterIndex() >= names.size();
+        context.setupUIComponentPresentation(sb.toString(), hlStart, hlEnd, isDisabled, false, false, context.getDefaultParameterColor()
         );
     }
 
-    @NotNull
-    private List<PsiElement> getIdentList(PasFormalParameterSection p) {
-        SmartList<PsiElement> res = new SmartList<PsiElement>();
-        for (PasFormalParameter paramSec : p.getFormalParameterList()) {
-            for (PasNamedIdent pasNamedIdent : paramSec.getNamedIdentList()) {
-                res.add(pasNamedIdent);
-            }
-        }
-        return res;
-    }
-
-    private String getHintText(PasFormalParameterSection p) {
-        String s = p.getText();
-        return s.length() > 2 ? s.substring(1, s.length() - 1) : "()";
-    }
 }

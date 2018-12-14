@@ -1,6 +1,8 @@
 package com.siberika.idea.pascal.editor;
 
 import com.intellij.codeInsight.intention.LowPriorityAction;
+import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.siberika.idea.pascal.ide.actions.SectionToggle;
@@ -11,14 +13,15 @@ import com.siberika.idea.pascal.lang.psi.PasModule;
 import com.siberika.idea.pascal.lang.psi.PasProcBodyBlock;
 import com.siberika.idea.pascal.lang.psi.PasTypes;
 import com.siberika.idea.pascal.lang.psi.PascalNamedElement;
+import com.siberika.idea.pascal.lang.psi.PascalRoutine;
 import com.siberika.idea.pascal.lang.psi.PascalStructType;
 import com.siberika.idea.pascal.lang.psi.impl.PasExportedRoutineImpl;
 import com.siberika.idea.pascal.lang.psi.impl.PasField;
 import com.siberika.idea.pascal.lang.psi.impl.PasRoutineImplDeclImpl;
-import com.siberika.idea.pascal.lang.psi.impl.PascalRoutineImpl;
 import com.siberika.idea.pascal.util.DocUtil;
 import com.siberika.idea.pascal.util.Filter;
 import com.siberika.idea.pascal.util.PsiUtil;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Collection;
 import java.util.List;
@@ -38,7 +41,7 @@ public class PascalRoutineActions {
         void calcData(final PsiFile file, final FixActionData data) {
             PasRoutineImplDeclImpl routine = (PasRoutineImplDeclImpl) data.element;
 
-            String prefix = routine.getNamespace() + ".";
+            String prefix = routine.getNamespace() + "(<.*>)?\\.";
             PasProcBodyBlock block = routine.getProcBodyBlock();
             int endoffs = block != null ? block.getStartOffsetInParent() : routine.getTextLength();
             data.text = "\n" + routine.getText().substring(0, endoffs);
@@ -57,12 +60,12 @@ public class PascalRoutineActions {
     public static class ActionDeclareAll extends ActionDeclare implements LowPriorityAction {
         public ActionDeclareAll(String name, PascalNamedElement element) {
             super(name, element);
-            PascalRoutineImpl routine = (PascalRoutineImpl) element;
+            PascalRoutine routine = (PascalRoutine) element;
             PasEntityScope scope = routine.getContainingScope();
             PasModule module = PsiUtil.getElementPasModule(routine);
             if (null != module) {
-                List<PascalRoutineImpl> fields = SectionToggle.collectFields(module.getPrivateFields(), PasField.FieldType.ROUTINE, null);
-                for (PascalRoutineImpl field : fields) {
+                List<PascalRoutine> fields = SectionToggle.collectFields(module.getPrivateFields(), PasField.FieldType.ROUTINE, null);
+                for (PascalRoutine field : fields) {
                     if ((field != routine) && (field.getContainingScope() == scope) && (null == SectionToggle.retrieveDeclaration(field, true))) {
                         addData(new FixActionData(field));
                     }
@@ -72,15 +75,15 @@ public class PascalRoutineActions {
     }
 
     public static class ActionImplement extends PascalActionDeclare {
+
         public ActionImplement(String name, PascalNamedElement element) {
             super(name, element, null);
         }
 
         @Override
         void calcData(final PsiFile file, final FixActionData data) {
-            PascalRoutineImpl routine = (PascalRoutineImpl) data.element;
+            PascalRoutine routine = (PascalRoutine) data.element;
             String prefix = SectionToggle.getPrefix(routine);
-
             data.text = data.element.getText();
             Collection<PasFunctionDirective> directives = PsiTreeUtil.findChildrenOfType(data.element, PasFunctionDirective.class);
             for (PasFunctionDirective directive : directives) {
@@ -115,22 +118,42 @@ public class PascalRoutineActions {
     }
 
     public static class ActionImplementAll extends ActionImplement implements LowPriorityAction {
+        private boolean initDone = false;
+
         public ActionImplementAll(String name, PascalNamedElement element) {
             super(name, element);
-            PascalRoutineImpl routine = (PascalRoutineImpl) element;
+        }
+
+        @Override
+        public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
+            lazyInit();
+            return super.isAvailable(project, editor, file);
+        }
+
+        synchronized private void lazyInit() {
+            if (initDone) {
+                return;
+            }
+            PascalNamedElement element = fixActionDataArray.isEmpty() ? null : fixActionDataArray.get(0).element;
+            if (!(element instanceof PascalRoutine)) {
+                return;
+            }
+            PascalRoutine routine = (PascalRoutine) element;
             List<PasExportedRoutineImpl> fields = SectionToggle.collectFields(SectionToggle.getDeclFields(routine.getContainingScope()),
                     PasField.FieldType.ROUTINE, new Filter<PasField>() {
-                @Override
-                public boolean allow(PasField value) {
-                    return value.getElement() instanceof PasExportedRoutineImpl;
-                }
-            });
+                        @Override
+                        public boolean allow(PasField value) {
+                            return value.getElement() instanceof PasExportedRoutineImpl;
+                        }
+                    });
             for (PasExportedRoutineImpl field : fields) {
                 if ((field != routine) && (PsiUtil.needImplementation(field)) && (null == SectionToggle.retrieveImplementation(field, true))) {
                     addData(new FixActionData(field));
                 }
             }
+            initDone = true;
         }
+
     }
 
 }

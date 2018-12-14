@@ -3,7 +3,14 @@ package com.siberika.idea.pascal.util;
 import com.intellij.codeInspection.SmartHashMap;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.TextRange;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.codeStyle.NameUtil;
+import com.intellij.util.SmartList;
+import com.siberika.idea.pascal.lang.lexer.PascalFlexLexer;
+import com.siberika.idea.pascal.lang.psi.PascalNamedElement;
+import org.jetbrains.annotations.NotNull;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -15,7 +22,12 @@ import java.util.regex.Pattern;
  * Date: 09/04/2015
  */
 public class StrUtil {
+
     public static final Pattern PATTERN_FIELD = Pattern.compile("[fF][A-Z]\\w*");
+
+    private static final int MAX_SHORT_TEXT_LENGTH = 32;
+
+    public enum ElementType {VAR, CONST, TYPE, FIELD, PROPERTY, ACTUAL_PARAMETER}
 
     public static boolean hasLowerCaseChar(String s) {
         for (char c : s.toCharArray()) {
@@ -93,15 +105,6 @@ public class StrUtil {
         return version1.compareTo(version2) <= 0;
     }
 
-    private static final Pattern DIR_PAT = Pattern.compile("\\{(\\$\\w+)\\s+([\\w.]+)\\s*}");
-    public static Pair<String, String> getDirectivePair(String text) {
-        Matcher m = DIR_PAT.matcher(text);
-        if (m.matches()) {
-            return Pair.create(m.group(1), m.group(2));
-        }
-        return null;
-    }
-
     public static Integer strToIntDef(String value, Integer def) {
         try {
             return Integer.parseInt(value);
@@ -109,4 +112,88 @@ public class StrUtil {
             return def;
         }
     }
+
+    private static final Pattern PATTERN_DEF_DECL = Pattern.compile("(?i)(defined|declared)\\s*\\(\\s*(\\w+)\\s*\\)");
+    public static List<Pair<Integer, String>> parseDirectives(String text) {
+        Matcher m = PascalFlexLexer.PATTERN_DEFINE.matcher(text);
+        if (m.matches()) {
+            return Collections.singletonList(Pair.create(m.start(1), m.group(1)));
+        } else {
+            m = PascalFlexLexer.PATTERN_CONDITION.matcher(text);
+            if (m.matches()) {
+                List<Pair<Integer, String>> res = new SmartList<>();
+                m = PATTERN_DEF_DECL.matcher(text);
+                while (m.find()) {
+                    res.add(Pair.create(m.start(2), m.group(2)));
+                }
+                return res;
+            } else {
+                return Collections.emptyList();
+            }
+        }
+    }
+
+    public static String toDebugString(PsiElement element) {
+        if (element instanceof PascalNamedElement) {
+            try {
+                return "[" + element.getClass().getSimpleName() + "]\"" + ((PascalNamedElement) element).getName()
+                        + "\" ^" + toDebugString(element.getParent()) + "..." + getShortText(element.getParent());
+            } catch (NullPointerException e) {
+                return "<NPE>";
+            }
+        } else {
+            return element != null ? element.toString() : "";
+        }
+    }
+
+    private static String getShortText(PsiElement parent) {
+        if (null == parent) {
+            return "";
+        }
+        int lfPos = parent.getText().indexOf("\n");
+        if (lfPos > 0) {
+            return parent.getText().substring(0, lfPos);
+        } else {
+            return parent.getText().substring(0, Math.min(parent.getText().length(), MAX_SHORT_TEXT_LENGTH));
+        }
+    }
+
+    public static String removePrefixes(@NotNull String name, String[] prefixes) {
+        if ((name.length() < 2) || !Character.isUpperCase(name.charAt(1))) {
+            return name;
+        }
+        String nameUpper = name.toUpperCase();
+        for (String prefix : prefixes) {
+            if (nameUpper.startsWith(prefix)) {
+                return name.substring(prefix.length());
+            }
+        }
+        return name;
+    }
+
+    public static String[] extractWords(String s, ElementType type) {
+        String[] splitNameIntoWords = NameUtil.splitNameIntoWords(s);
+        String[] result = new String[splitNameIntoWords.length];
+        String lastWord = "";
+        for (int i = splitNameIntoWords.length - 1; i >= 0; i--) {
+            String curWord = splitNameIntoWords[i];
+            if (ElementType.CONST == type) {
+                curWord = curWord.toUpperCase() + (lastWord.length() == 0 ? "" : "_");
+            }
+            lastWord = curWord + lastWord;
+            result[i] = lastWord;
+        }
+        return result;
+    }
+
+    public static String getNamePart(String fqn) {
+        int pos = fqn.lastIndexOf(".");
+        return pos >= 0 ? fqn.substring(pos + 1) : fqn;
+    }
+
+    public static String getNamespace(String fqn) {
+        int pos = fqn.lastIndexOf(".");
+        return pos >= 0 ? fqn.substring(0, pos) : "";
+    }
+
 }

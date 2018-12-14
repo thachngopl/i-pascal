@@ -2,24 +2,25 @@ package com.siberika.idea.pascal.ide.actions;
 
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
+import com.intellij.psi.PsiManager;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.util.SmartList;
 import com.intellij.util.containers.SmartHashSet;
 import com.siberika.idea.pascal.lang.psi.PasBlockGlobal;
 import com.siberika.idea.pascal.lang.psi.PasEntityScope;
 import com.siberika.idea.pascal.lang.psi.PasExportedRoutine;
-import com.siberika.idea.pascal.lang.psi.PasFunctionDirective;
 import com.siberika.idea.pascal.lang.psi.PasGenericTypeIdent;
 import com.siberika.idea.pascal.lang.psi.PasRoutineImplDecl;
 import com.siberika.idea.pascal.lang.psi.PasUsesClause;
+import com.siberika.idea.pascal.lang.psi.PascalModule;
 import com.siberika.idea.pascal.lang.psi.PascalNamedElement;
+import com.siberika.idea.pascal.lang.psi.PascalRoutine;
 import com.siberika.idea.pascal.lang.psi.PascalStructType;
 import com.siberika.idea.pascal.lang.psi.impl.PasField;
 import com.siberika.idea.pascal.lang.psi.impl.PasModuleImpl;
 import com.siberika.idea.pascal.lang.psi.impl.PasRoutineImplDeclImpl;
-import com.siberika.idea.pascal.lang.psi.impl.PascalModule;
 import com.siberika.idea.pascal.lang.psi.impl.PascalModuleImpl;
-import com.siberika.idea.pascal.lang.psi.impl.PascalRoutineImpl;
+import com.siberika.idea.pascal.lang.psi.impl.RoutineUtil;
 import com.siberika.idea.pascal.util.Filter;
 import com.siberika.idea.pascal.util.PosUtil;
 import com.siberika.idea.pascal.util.PsiUtil;
@@ -43,7 +44,7 @@ public class SectionToggle {
     public static void getStructTarget(Collection<PsiElement> targets, PsiElement element) {
         PascalStructType struct = PsiUtil.getStructByElement(element);
         if (struct != null) {
-            Container cont = calcPrefix(new Container(struct));
+            Container cont = calcPrefix(new Container(struct), false);
             retrieveFirstImplementations(targets, cont);
         }
     }
@@ -64,8 +65,8 @@ public class SectionToggle {
     }
 
     // Non-strict
-    public static PsiElement getRoutineTarget(PascalRoutineImpl routine) {
-        Container cont = calcPrefix(new Container(routine));
+    public static PsiElement getRoutineTarget(PascalRoutine routine) {
+        Container cont = calcPrefix(new Container(routine), false);
         if (routine instanceof PasExportedRoutine) {
             return retrieveImplementation(cont, false);
         } else if (routine instanceof PasRoutineImplDecl) {
@@ -74,9 +75,25 @@ public class SectionToggle {
         return null;
     }
 
+    // Strict
+    public static PsiElement getImplementationOrDeclaration(PascalRoutine routine) {
+        Container cont = calcPrefix(new Container(routine), false);
+        if (routine instanceof PasExportedRoutine) {
+            return retrieveImplementation(cont, true);
+        } else if (routine instanceof PasRoutineImplDeclImpl) {
+            PsiElement decl = retrieveDeclaration(cont, true);
+            if (decl != null) {
+                return decl;
+            } else {
+                return getRoutineForwardDeclaration((PasRoutineImplDeclImpl) routine);
+            }
+        }
+        return null;
+    }
+
     @Nullable
-    public static PsiElement retrieveImplementation(PascalRoutineImpl routine, boolean strict) {
-        return retrieveImplementation(calcPrefix(new Container(routine)), strict);
+    public static PsiElement retrieveImplementation(PascalRoutine routine, boolean strict) {
+        return retrieveImplementation(calcPrefix(new Container(routine), false), strict);
     }
 
     @Nullable
@@ -88,9 +105,9 @@ public class SectionToggle {
         if (container.scope instanceof PasModuleImpl) {
             field = ((PasModuleImpl) container.scope).getPrivateField(container.prefix + PsiUtil.getFieldName(container.element));
             field = checkRoutineField(field);
-            if (null == field && (!strict || !isOverloaded((PasExportedRoutine) container.element))) {                          // Try to find implementation w/o parameters
+            if (null == field && (!strict || !RoutineUtil.isOverloaded((PasExportedRoutine) container.element))) {                          // Try to find implementation w/o parameters
                 field = checkRoutineField(((PasModuleImpl) container.scope).getPrivateField(container.prefix + container.element.getName()));
-                if (strict && (field != null) && hasParametersOrReturnType((PascalRoutineImpl) field.getElement())) {           // Only empty parameters list and return type allowed in strict mode
+                if (strict && (field != null) && hasParametersOrReturnType((PascalRoutine) field.getElement())) {           // Only empty parameters list and return type allowed in strict mode
                     field = null;
                 }
             }
@@ -98,17 +115,8 @@ public class SectionToggle {
         return field != null ? field.getElement() : null;
     }
 
-    public static boolean hasParametersOrReturnType(PascalRoutineImpl routine) {
-        return PsiUtil.hasParameters(routine) || routine.getFunctionTypeStr().length() > 0;
-    }
-
-    private static boolean isOverloaded(PasExportedRoutine routine) {
-        for (PasFunctionDirective directive : routine.getFunctionDirectiveList()) {
-            if (directive.getText().toUpperCase().startsWith("OVERLOAD")) {
-                return true;
-            }
-        }
-        return false;
+    public static boolean hasParametersOrReturnType(@Nullable PascalRoutine routine) {
+        return (routine != null) && (routine.hasParameters() || (!routine.isConstructor() && routine.getFunctionTypeStr().length() > 0));
     }
 
     private static PasField checkRoutineField(PasField field) {
@@ -142,11 +150,11 @@ public class SectionToggle {
     }
 
     @Nullable
-    public static PsiElement retrieveDeclaration(PascalRoutineImpl routine, boolean strict) {
-        if (routine.getClass() != PasRoutineImplDeclImpl.class) {           // Filter out nested routines
+    public static PsiElement retrieveDeclaration(PascalRoutine routine, boolean strict) {
+        if (!PsiUtil.isNotNestedRoutine(routine)) {           // Filter out nested routines and closures
             return null;
         }
-        return retrieveDeclaration(calcPrefix(new Container(routine)), strict);
+        return retrieveDeclaration(calcPrefix(new Container(routine), false), strict);
     }
 
     @Nullable
@@ -165,7 +173,7 @@ public class SectionToggle {
                 field = retrieveField(scope, name.substring(0, name.indexOf('(')));
                 field = checkRoutineField(field);
                 if ((field != null) && strict &&
-                        (isOverloaded((PasExportedRoutine) field.getElement()) || hasParametersOrReturnType((PascalRoutineImpl) container.element))) {
+                        (RoutineUtil.isOverloaded((PasExportedRoutine) field.getElement()) || hasParametersOrReturnType((PascalRoutine) container.element))) {
                     field = null;               // Overloaded routines must repeat parameters
                 }
             }
@@ -182,20 +190,20 @@ public class SectionToggle {
     }
 
     public static String getPrefix(PasEntityScope scope) {
-        return calcPrefix(new Container(scope)).prefix;
+        return calcPrefix(new Container(scope), true).prefix;
     }
 
-    private static Container calcPrefix(Container current) {
+    private static Container calcPrefix(Container current, boolean genericAware) {
         while ((current.scope != null) && !(current.scope instanceof PascalModuleImpl)) {
             current.scope = findOwner(current.scope);
             if (current.scope instanceof PascalStructType) {
                 PsiElement nameEl = current.scope.getNameIdentifier();
-                if (nameEl instanceof PasGenericTypeIdent) {
-                    current.prefix = ((PasGenericTypeIdent) nameEl).getRefNamedIdent().getName() + "." + current.prefix;
+                if (!genericAware && (nameEl instanceof PasGenericTypeIdent)) {
+                    current.prefix = ((PasGenericTypeIdent) nameEl).getNamedIdentDecl().getName() + "." + current.prefix;
                 } else {
-                    current.prefix = current.scope.getName() + "." + current.prefix;
+                    current.prefix = RoutineUtil.calcCanonicalTypeName(current.scope.getName()) + "." + current.prefix;
                 }
-            } else if (current.scope instanceof PascalRoutineImpl) {
+            } else if (current.scope instanceof PascalRoutine) {
                 current.element = current.scope;
             }
         }
@@ -218,6 +226,18 @@ public class SectionToggle {
         return -1;
     }
 
+    @Nullable
+    public static PsiElement getRoutineForwardDeclaration(@NotNull PasRoutineImplDeclImpl routine) {
+        PasEntityScope parent = routine.getContainingScope();
+        PasField field = null;
+        if (parent instanceof PascalModule) {
+            field = ((PascalModule) parent).getPrivateField(PsiUtil.getFieldName(routine));
+        } else if (parent instanceof PascalRoutine) {
+            field = parent.getField(PsiUtil.getFieldName(routine));
+        }
+        return field != null ? field.getElement() : null;
+    }
+
     private static class Container {
         String prefix = "";
         PasEntityScope element;
@@ -229,26 +249,27 @@ public class SectionToggle {
         }
     }
 
-    public static int findImplPos(final PascalRoutineImpl routine) {
+    public static int findImplPos(final PascalRoutine routine) {
         // collect all routine/method declarations in module/structure
         // remember index of the given routine declaration
         int res = -1;
         int ind = -1;
         PasEntityScope scope = routine.getContainingScope();
+        PsiManager psiManager = PsiManager.getInstance(routine.getProject());
         if (scope != null) {
-            List<PascalRoutineImpl> decls = collectFields(getDeclFields(scope), PasField.FieldType.ROUTINE, null);
+            List<PascalRoutine> decls = collectFields(getDeclFields(scope), PasField.FieldType.ROUTINE, null);
             for (int i = 0; i < decls.size(); i++) {
-                if (decls.get(i).isEquivalentTo(routine)) {
+                if (psiManager.areElementsEquivalent(routine, decls.get(i))) {
                     ind = i;
                 }
             }
             // starting from the index search for implementations
             for (int i = ind - 1; (i >= 0) && (res < 0); i--) {
-                PsiElement impl = retrieveImplementation(calcPrefix(new Container(decls.get(i))), false);
+                PsiElement impl = retrieveImplementation(calcPrefix(new Container(decls.get(i)), false), false);
                 res = impl != null ? impl.getTextRange().getEndOffset() : -1;
             }
             for (int i = ind + 1; (i < decls.size()) && (res < 0); i++) {
-                PsiElement impl = retrieveImplementation(calcPrefix(new Container(decls.get(i))), false);
+                PsiElement impl = retrieveImplementation(calcPrefix(new Container(decls.get(i)), false), false);
                 if (impl != null) {
                     res = impl.getTextRange().getStartOffset();
                 }
@@ -264,7 +285,8 @@ public class SectionToggle {
         for (PasField field : fields) {
             PascalNamedElement el = field.getElement();
             //noinspection SuspiciousMethodCalls
-            if (((null == type) || (field.fieldType == type)) && !resultSet.contains(el) && ((null == filter) || filter.allow(field))) {
+            if (((null == type) || (field.fieldType == type)) &&
+                    (el != null) && !resultSet.contains(el) && ((null == filter) || filter.allow(field))) {
                 result.add((T) el);
                 resultSet.add((T) el);
             }
@@ -284,7 +306,7 @@ public class SectionToggle {
     }
 
     // Returns suggested position of declaration in interface/structure of the specified implementation of routine/method
-    public static int findIntfPos(final PascalRoutineImpl routine) {
+    public static int findIntfPos(final PascalRoutine routine) {
         // collect all routine implementations in module with the same prefix
         // remember index of the given routine implementation
         int res = -1;
@@ -292,21 +314,22 @@ public class SectionToggle {
         int member = -1;                        // To be used if right place will not be found
 
         final PasEntityScope scope = routine.getContainingScope();
-        Container cont = calcPrefix(new Container(routine));
+        Container cont = calcPrefix(new Container(routine), false);
         Collection<PasField> fields;
         if (cont.scope instanceof PascalModule) {
             fields = ((PascalModule) cont.scope).getPrivateFields();
         } else {
             fields = cont.scope.getAllFields();
         }
-        List<PascalRoutineImpl> impls = collectFields(fields, PasField.FieldType.ROUTINE, new Filter<PasField>() {
+        List<PascalRoutine> impls = collectFields(fields, PasField.FieldType.ROUTINE, new Filter<PasField>() {
             @Override
             public boolean allow(PasField value) {
-                return (value.getElement() instanceof PascalRoutineImpl) && (((PascalRoutineImpl) value.getElement()).getContainingScope() == scope);
+                return (value.getElement() instanceof PascalRoutine) && (((PascalRoutine) value.getElement()).getContainingScope() == scope);
             }
         });
+        PsiManager psiManager = PsiManager.getInstance(routine.getProject());
         for (int i = 0; i < impls.size(); i++) {
-            if (impls.get(i).isEquivalentTo(routine)) {
+            if (psiManager.areElementsEquivalent(routine, impls.get(i))) {
                 ind = i;
             }
         }
@@ -319,11 +342,11 @@ public class SectionToggle {
         }
         // starting from the index search for declarations
         for (int i = ind - 1; (i >= 0) && (res < 0); i--) {
-            PsiElement decl = retrieveDeclaration(calcPrefix(new Container(impls.get(i))), false);
+            PsiElement decl = retrieveDeclaration(calcPrefix(new Container(impls.get(i)), false), false);
             res = decl != null ? decl.getTextRange().getEndOffset() : -1;
         }
         for (int i = ind + 1; (i < impls.size()) && (res < 0); i++) {
-            PsiElement decl = retrieveDeclaration(calcPrefix(new Container(impls.get(i))), false);
+            PsiElement decl = retrieveDeclaration(calcPrefix(new Container(impls.get(i)), false), false);
             if (decl != null) {
                 res = decl.getTextRange().getStartOffset();
             }
@@ -331,7 +354,7 @@ public class SectionToggle {
         res = res < 0 ? member : res;
         if (res < 0) {                             // other declarations not found
             if (scope instanceof PascalStructType) {
-                res = PosUtil.findPosInStruct((PascalStructType) scope, PasField.FieldType.ROUTINE, PasField.Visibility.PRIVATE.ordinal()).first;
+                res = PosUtil.findPosInStruct((PascalStructType) scope, PasField.FieldType.ROUTINE, PasField.Visibility.PRIVATE).first;
             } else {
                 PsiElement pos = PsiUtil.getModuleInterfaceSection(routine.getContainingFile());
                 if (null != pos) {                                                                  // to the end of interface section

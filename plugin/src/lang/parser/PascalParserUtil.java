@@ -7,19 +7,17 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
-import com.intellij.psi.PsiManager;
 import com.intellij.psi.impl.source.resolve.FileContextUtil;
-import com.intellij.psi.search.FileTypeIndex;
-import com.intellij.psi.search.GlobalSearchScope;
-import com.intellij.psi.search.PsiElementProcessor;
 import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.util.indexing.FileBasedIndex;
-import com.siberika.idea.pascal.PascalFileType;
 import com.siberika.idea.pascal.PascalIcons;
+import com.siberika.idea.pascal.PascalRTException;
+import com.siberika.idea.pascal.lang.compiled.CompiledFileImpl;
+import com.siberika.idea.pascal.lang.psi.PasClassField;
 import com.siberika.idea.pascal.lang.psi.PasClassHelperDecl;
+import com.siberika.idea.pascal.lang.psi.PasClassProperty;
 import com.siberika.idea.pascal.lang.psi.PasClassTypeDecl;
 import com.siberika.idea.pascal.lang.psi.PasClosureExpr;
 import com.siberika.idea.pascal.lang.psi.PasConstDeclaration;
@@ -27,32 +25,35 @@ import com.siberika.idea.pascal.lang.psi.PasEntityScope;
 import com.siberika.idea.pascal.lang.psi.PasFullyQualifiedIdent;
 import com.siberika.idea.pascal.lang.psi.PasGenericTypeIdent;
 import com.siberika.idea.pascal.lang.psi.PasInterfaceTypeDecl;
+import com.siberika.idea.pascal.lang.psi.PasModule;
 import com.siberika.idea.pascal.lang.psi.PasNamedIdent;
+import com.siberika.idea.pascal.lang.psi.PasNamedIdentDecl;
 import com.siberika.idea.pascal.lang.psi.PasNamespaceIdent;
 import com.siberika.idea.pascal.lang.psi.PasObjectDecl;
 import com.siberika.idea.pascal.lang.psi.PasRecordDecl;
 import com.siberika.idea.pascal.lang.psi.PasRecordHelperDecl;
 import com.siberika.idea.pascal.lang.psi.PasTypeDecl;
+import com.siberika.idea.pascal.lang.psi.PasVarDeclaration;
+import com.siberika.idea.pascal.lang.psi.PascalIdentDecl;
 import com.siberika.idea.pascal.lang.psi.PascalNamedElement;
-import com.siberika.idea.pascal.lang.psi.PascalPsiElement;
 import com.siberika.idea.pascal.lang.psi.PascalQualifiedIdent;
-import com.siberika.idea.pascal.lang.psi.PascalStructType;
-import com.siberika.idea.pascal.lang.psi.impl.PascalRoutineImpl;
+import com.siberika.idea.pascal.lang.psi.PascalRoutine;
+import com.siberika.idea.pascal.lang.psi.PascalVariableDeclaration;
+import com.siberika.idea.pascal.lang.psi.impl.PasField;
+import com.siberika.idea.pascal.lang.psi.impl.PascalIdentDeclImpl;
 import com.siberika.idea.pascal.lang.references.PasReferenceUtil;
+import com.siberika.idea.pascal.lang.references.ResolveUtil;
+import com.siberika.idea.pascal.lang.stub.PasIdentStub;
+import com.siberika.idea.pascal.sdk.BuiltinsParser;
 import com.siberika.idea.pascal.util.PsiUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Set;
-import java.util.TreeSet;
-import java.util.regex.Pattern;
 
 /**
  * Author: George Bakhtadze
@@ -62,73 +63,27 @@ import java.util.regex.Pattern;
 public class PascalParserUtil extends GeneratedParserUtilBase {
     private static final Logger LOG = Logger.getInstance(PascalParserUtil.class);
 
-    public static final Collection<String> EXPLICIT_UNITS = Arrays.asList("system", "$builtins");
+    public static final String UNIT_NAME_SYSTEM = "system";
+    public static final Collection<String> EXPLICIT_UNITS = Arrays.asList(UNIT_NAME_SYSTEM, BuiltinsParser.UNIT_NAME_BUILTINS);
     public static final int MAX_STRUCT_TYPE_RESOLVE_RECURSION = 1000;
 
     public static boolean parsePascal(PsiBuilder builder_, int level, Parser parser) {
-        PsiFile file = builder_.getUserDataUnprotected(FileContextUtil.CONTAINING_FILE_KEY);
-        String filename = "<unknown>";
+        PsiFile file = builder_.getUserData(FileContextUtil.CONTAINING_FILE_KEY);
         if ((file != null) && (file.getVirtualFile() != null)) {
-            //System.out.println("Parse: " + file.getVirtualFile().getName());
-            filename = file.getName();
+            try {
+                String name = file.getVirtualFile().getName();
+                if (!name.startsWith("test") && !name.startsWith("$")) {
+//                    throw new PascalRTException("===*** Parse: " + name);
+                }
+            } catch (PascalRTException e) {
+//                e.printStackTrace();
+//                System.out.println(e.getMessage());
+            }
         }
         //builder_.setDebugMode(true);
         ErrorState state = ErrorState.get(builder_);
         boolean res = parseAsTree(state, builder_, level, DUMMY_BLOCK, true, parser, TRUE_CONDITION);
         return res;
-    }
-
-    @NotNull
-    public static Collection<PascalNamedElement> findSymbols(final Project project, final String pattern) {
-        final Set<PascalNamedElement> result = new HashSet<PascalNamedElement>();
-        final Pattern p = Pattern.compile("\\w*" + pattern + "\\w*");
-        processProjectElements(project, new PsiElementProcessor<PascalNamedElement>() {
-            @Override
-            public boolean execute(@NotNull PascalNamedElement element) {
-                if (p.matcher(element.getName()).matches()) {
-                    result.add(element);
-                }
-                return true;
-            }
-        }, PascalStructType.class, PasConstDeclaration.class, PascalRoutineImpl.class, PasNamedIdent.class, PasGenericTypeIdent.class);
-        return new ArrayList<PascalNamedElement>(result);
-    }
-
-    @NotNull
-    public static <T extends PascalNamedElement> Collection<T> findSymbols(final Project project, final String pattern, Class<T> clazz) {
-        final Set<T> result = new HashSet<T>();
-        final Pattern p = Pattern.compile("\\w*" + pattern + "\\w*");
-        processProjectElements(project, new PsiElementProcessor<T>() {
-            @Override
-            public boolean execute(@NotNull T element) {
-                if (p.matcher(element.getName()).matches()) {
-                    result.add(element);
-                }
-                return true;
-            }
-        }, clazz);
-        return new ArrayList<T>(result);
-    }
-
-    public static Collection<PascalNamedElement> findClasses(Project project, final String pattern) {
-        final Set<PascalNamedElement> result = new HashSet<PascalNamedElement>();
-        final Pattern p = Pattern.compile("\\w*" + pattern + "\\w*");
-        processProjectElements(project, new PsiElementProcessor<PascalStructType>() {
-            @Override
-            public boolean execute(@NotNull PascalStructType element) {
-                if (p.matcher(element.getName()).matches()) {
-                    result.add(element);
-                }
-                return true;
-            }
-        }, PascalStructType.class);
-        return new ArrayList<PascalNamedElement>(result);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Collection<PascalNamedElement> findTypes(PsiElement element, final String key) {
-        Collection<PascalNamedElement> result = retrieveSortedVisibleEntitiesDecl(element, key, PasGenericTypeIdent.class);
-        return result;
     }
 
     private static boolean isSameAffectingScope(PsiElement innerSection, PsiElement outerSection) {
@@ -138,7 +93,7 @@ public class PascalParserUtil extends GeneratedParserUtilBase {
             }
             if ((null == innerSection) || PsiUtil.isInstanceOfAny(innerSection,
                     PasClassTypeDecl.class, PasClassHelperDecl.class, PasInterfaceTypeDecl.class, PasObjectDecl.class, PasRecordDecl.class, PasRecordHelperDecl.class,
-                    PasClosureExpr.class, PascalRoutineImpl.class)) {
+                    PasClosureExpr.class, PascalRoutine.class)) {
                 return false;
             }
             innerSection = PsiUtil.getNearestAffectingDeclarationsRoot(innerSection);
@@ -153,7 +108,7 @@ public class PascalParserUtil extends GeneratedParserUtilBase {
      */
     @SuppressWarnings("ConstantConditions")
     private static void addUsedUnitDeclarations(Collection<PascalNamedElement> result, PsiElement current, String name) {
-        for (PasNamespaceIdent usedUnitName : PsiUtil.getUsedUnits(current.getContainingFile())) {
+        for (PascalQualifiedIdent usedUnitName : PsiUtil.getUsedUnits(current.getContainingFile())) {
             addUnitDeclarations(result, current.getProject(), ModuleUtilCore.findModuleForPsiElement(usedUnitName), usedUnitName.getName(), name);
         }
         for (String unitName : EXPLICIT_UNITS) {
@@ -177,7 +132,7 @@ public class PascalParserUtil extends GeneratedParserUtilBase {
     private static void addDeclarations(Collection<PascalNamedElement> result, PsiElement section, String name) {
         if (section != null) {
             result.addAll(retrieveEntitiesFromSection(section, name, getEndOffset(section),
-                    PasNamedIdent.class, PasGenericTypeIdent.class, PasNamespaceIdent.class));
+                    PasNamedIdent.class, PasNamedIdentDecl.class, PasGenericTypeIdent.class, PasNamespaceIdent.class));
         }
     }
 
@@ -198,6 +153,9 @@ public class PascalParserUtil extends GeneratedParserUtilBase {
         }
         if (PsiUtil.isTypeDeclPointingToSelf(typeIdent)) {
             return PsiUtil.getElementPasModule(typeIdent);
+        }
+        if (typeIdent.getParent() instanceof PasGenericTypeIdent) {  // resolved from stub
+            typeIdent = (PascalNamedElement) typeIdent.getParent();
         }
         PasTypeDecl typeDecl = PsiTreeUtil.getNextSiblingOfType(typeIdent, PasTypeDecl.class);
         if (typeDecl != null) {
@@ -226,31 +184,6 @@ public class PascalParserUtil extends GeneratedParserUtilBase {
         return null;
     }
 
-    /**
-     * Returns list of entities matching the specified key and classes which may be visible from the element
-     * @param element - element which should be affected by returned named entities
-     * @param key - key which should match entities names
-     * @param classes - classes of entities to retrieve
-     * @return list of entities sorted in such a way that entity nearest to element comes first
-     */
-    private static <T extends PascalNamedElement> Collection<PascalNamedElement> retrieveSortedVisibleEntitiesDecl(PsiElement element, String key, Class<? extends T>... classes) {
-        Collection<PascalNamedElement> result = new TreeSet<PascalNamedElement>(new Comparator<PascalNamedElement>() {
-            @Override
-            public int compare(PascalNamedElement o1, PascalNamedElement o2) {
-                return o2.getTextRange().getStartOffset() - o1.getTextRange().getStartOffset();
-            }
-        });
-        if (null == element.getContainingFile()) {
-            return result;
-        }
-        int offset = element.getTextRange().getStartOffset();
-        if (PsiUtil.allowsForwardReference(element)) {
-            offset = element.getContainingFile().getTextLength();
-        }
-        result.addAll(retrieveEntitiesFromSection(PsiUtil.getNearestAffectingDeclarationsRoot(element), key, offset, classes));
-        return result;
-    }
-
     @NotNull
     private static <T extends PascalNamedElement> Collection<PascalNamedElement> retrieveEntitiesFromSection(PsiElement section, String key, int maxOffset, Class<? extends T>...classes) {
         final Set<PascalNamedElement> result = new LinkedHashSet<PascalNamedElement>();
@@ -273,59 +206,103 @@ public class PascalParserUtil extends GeneratedParserUtilBase {
             @Nullable
             @Override
             public String getPresentableText() {
-                if (element instanceof PascalRoutineImpl) {
+                if ((element instanceof PascalRoutine) && (isASTAvailable(element))) {
                     return element.getText();
                 }
-                return element.getName() + getType(element);
+                String typeString = "";
+                if (element instanceof PascalIdentDecl) {
+                    typeString = ((PascalIdentDecl) element).getTypeString();
+                    if (!StringUtil.isEmpty(typeString)) {
+                        typeString = ": " + typeString;
+                    }
+                }
+                return ResolveUtil.cleanupName(element.getName()) + typeString;
             }
 
             @Nullable
             @Override
             public String getLocationString() {
-                return element.getContainingFile() != null ? element.getContainingFile().getName() : "-";
+                return getType(element) + (element.getContainingFile() != null ? element.getContainingFile().getName() : "-");
             }
 
             @Nullable
             @Override
             public Icon getIcon(boolean unused) {
+                if (element instanceof PascalIdentDeclImpl) {
+                    PasIdentStub stub = ((PascalIdentDeclImpl) element).retrieveStub();
+                    PasField.FieldType type = stub != null ? stub.getType() : PsiUtil.getFieldType(element);
+                    switch (type) {
+                        case VARIABLE: return PascalIcons.VARIABLE;
+                        case TYPE: return PascalIcons.TYPE;
+                        case CONSTANT: return PascalIcons.CONSTANT;
+                        case ROUTINE: return PascalIcons.ROUTINE;
+                    }
+                } else if (element instanceof PasClassTypeDecl) {
+                    return PascalIcons.CLASS;
+                } else if (element instanceof PasRecordDecl) {
+                    return PascalIcons.RECORD;
+                } else if (element instanceof PasInterfaceTypeDecl) {
+                    return PascalIcons.INTERFACE;
+                } else if (element instanceof PasObjectDecl) {
+                    return PascalIcons.OBJECT;
+                } else if (element instanceof PascalRoutine) {
+                    return PascalIcons.ROUTINE;
+                } else if (element instanceof PasGenericTypeIdent) {
+                    return PascalIcons.TYPE;
+                } else if (element instanceof PascalVariableDeclaration) {
+                    return PascalIcons.VARIABLE;
+                } else if (element instanceof PasConstDeclaration) {
+                    return PascalIcons.CONSTANT;
+                } else if (element instanceof PasClassProperty) {
+                    return PascalIcons.PROPERTY;
+                } else if (element instanceof PasModule) {
+                    return PascalIcons.UNIT;
+                }
                 return PascalIcons.GENERAL;
             }
         };
     }
 
-    private static String getType(PascalNamedElement item) {
-        if (item instanceof PasClassTypeDecl) {
-            return " [Class]";
-        } else if (item instanceof PasRecordDecl) {
-            return " [Record]";
-        } else if (item instanceof PasObjectDecl) {
-            return " [Oject]";
-        } else if (item instanceof PasClassHelperDecl) {
-            return " [Class helper]";
-        } else if (item instanceof PasRecordHelperDecl) {
-            return " [Record helper]";
-        } else if (item instanceof PasConstDeclaration) {
-            return " [Const]";
-        } else if (item instanceof PasTypeDecl) {
-            return " [Type]";
-        }
-        return "";
+    private static boolean isASTAvailable(PascalNamedElement element) {
+        return (!(element.getContainingFile() instanceof CompiledFileImpl));
     }
 
-    /**
-     * Handle all elements of the specified classes in project source (not in PPU) with the given processor
-     */
-    public static <T extends PascalPsiElement> void processProjectElements(Project project, PsiElementProcessor<T> processor, Class<? extends T>... clazz) {
-        Collection<VirtualFile> virtualFiles = FileBasedIndex.getInstance().getContainingFiles(FileTypeIndex.NAME, PascalFileType.INSTANCE,
-                GlobalSearchScope.allScope(project));
-        for (VirtualFile virtualFile : virtualFiles) {
-            PascalFile pascalFile = (PascalFile) PsiManager.getInstance(project).findFile(virtualFile);
-            if (pascalFile != null) {
-                for (T element : PsiUtil.findChildrenOfAnyType(pascalFile, clazz)) {
-                    processor.execute(element);
-                }
+    private static String getType(PascalNamedElement item) {
+        if (item instanceof PascalIdentDeclImpl) {
+            PasIdentStub stub = ((PascalIdentDeclImpl) item).retrieveStub();
+            PasField.FieldType type = stub != null ? stub.getType() : PsiUtil.getFieldType(item);
+            switch (type) {
+                case VARIABLE: return "[var] ";
+                case TYPE: return "[type] ";
+                case CONSTANT: return "[const] ";
+                case ROUTINE: return "[routine] ";
             }
+        } else if (item instanceof PasClassTypeDecl) {
+            return "[class] ";
+        } else if (item instanceof PasInterfaceTypeDecl) {
+            return "[interface] ";
+        } else if (item instanceof PasRecordDecl) {
+            return "[record] ";
+        } else if (item instanceof PasObjectDecl) {
+            return "[object] ";
+        } else if (item instanceof PascalRoutine) {
+            return "[routine] ";
+        } else if (item instanceof PasClassHelperDecl) {
+            return "[class helper] ";
+        } else if (item instanceof PasRecordHelperDecl) {
+            return "[record helper] ";
+        } else if (item instanceof PasVarDeclaration) {
+            return "[var] ";
+        } else if (item instanceof PasClassField) {
+            return "[field] ";
+        } else if (item instanceof PasConstDeclaration) {
+            return "[const] ";
+        } else if (item instanceof PasTypeDecl) {
+            return "[type] ";
+        } else if (item instanceof PasClassProperty) {
+            return "[property] ";
         }
+        return "";
     }
 
 }
